@@ -2,63 +2,29 @@
 
 **Representation learning for systems execution.**
 
-A trace intelligence engine that learns the shape of healthy and pathological execution from low-level system telemetry.
+A trace intelligence engine that watches programs run, turns execution into structured traces, and learns embeddings of system behavior - so you can ask whether an execution is normal, where it diverged, and what it resembles, without hand-written labels.
 
 ## What Ygg Does
 
-Ygg watches real programs run, turns their execution into structured traces, learns embeddings of system behavior, and lets you ask:
-
-- Is this execution normal?
-- Where did behavior diverge?
-- What class of failure does this resemble?
-- Which executions are behaviorally similar?
-- Did a code change create a new execution regime?
-- Did Loki discover a failure mode we've never seen before?
-
-The important word is **representation**. Ygg doesn't start with labels like "deadlock" or "disk stall." It learns:
+Ygg learns:
 
 ```
 execution → vector
 ```
 
-where executions with similar underlying behavior cluster together.
+where executions with similar underlying behavior land close together. From that representation it answers:
 
-## Stack Position
+- Is this execution normal?
+- Where did behavior diverge?
+- What class of failure does this resemble?
+- Did a code change create a new execution regime?
 
-```
-                     ┌──────────────┐
-                     │     Ygg      │
-                     │  understands │
-                     └──────▲───────┘
-                            │
-                         traces
-                            │
-          ┌─────────────────┼─────────────────┐
-          │                 │                 │
-       ┌──┴──┐           ┌──┴──┐          ┌──┴──┐
-       │Norn │           │Weir │          │Orda │
-       └──▲──┘           └──▲──┘          └──▲──┘
-          │                 │                 │
-          └────────────┬────┴─────┬──────────┘
-                       │          │
-                    ┌──┴──┐    ┌──┴───┐
-                    │Loki │    │Fenrir│
-                    │fault│    │load  │
-                    └──┬──┘    └──┬───┘
-                       │          │
-                       └────┬─────┘
-                            │
-                         ┌──┴──┐
-                         │Kiln │
-                         │proof│
-                         └─────┘
-```
+The important word is **representation**. Ygg doesn't start from labels like "deadlock" or "disk stall". It learns the shape of execution first, then answers questions in that space.
 
 ## Quick Start
 
 ```bash
 # Build the Rust collector (Linux recommended for full eBPF/perf support)
-# macOS builds but the eBPF/perf data path is a compile-time no-op.
 cargo build --release
 
 # Record a trace (requires Linux + root for eBPF/perf)
@@ -71,114 +37,88 @@ python -m model.train --help
 python -c "import analysis"
 ```
 
-> **Platform note:** The collector's eBPF (aya) and `perf_event_open` hardware counters are Linux-only, gated behind `cfg(target_os = "linux")`. On macOS the crate compiles but performs no collection. eBPF also requires clang and kernel BTF (`vmlinux.h`); see `DEVELOPMENT.md`.
+> **Platform note:** eBPF (aya) and `perf_event_open` hardware counters are Linux-only, gated behind `cfg(target_os = "linux")`. On macOS the crate compiles but performs no kernel collection. Application-level C instrumentation works on both platforms. See [DEVELOPMENT.md](DEVELOPMENT.md).
 
-## Current Status
+## Measured Results
 
-What is implemented and verified versus what is still scaffolded:
+All numbers below are from committed artifacts in this repo, not projections.
 
-| Component | State | Notes |
-|-----------|-------|-------|
-| `collector/` | Implemented | Rust + eBPF (aya) + `perf_event_open`. `cargo build --release` works. Linux-only telemetry; macOS build is a no-op. Depends on the `ygg-schema` crate for the `Event` type (the old `schema.rs` was deleted). |
-| `instrumentation/` | Implemented | C++20 header (`ygg.h`) + C implementation + Rust FFI wrapper. Thread-local SPSC ring buffers, `/dev/shm/ygg-<pid>` shared memory, 100ms TSC calibration, single collector thread with Unix socket forwarding + spill-file fallback. Builds `libygg_instrumentation.a`/`.so`. 2/2 tests pass. |
-| `schema/` | Implemented | `ygg-schema` Rust crate with `Event`, `EventKind`, and Arrow/Parquet schemas. |
-| `model/` | Implemented | JAX/Flax: `config.py`, `encoder.py`, `hierarchical.py`, `objectives.py`, `dataset.py`, `train.py`. `python -m model.train --help` works. |
-| `analysis/` | Implemented | `divergence.py`, `clustering.py`, `attribution.py`, `viz.py`. `python -c "import analysis"` works. |
-| `integrations/` | Scaffolded | Kiln/Loki/Norn/Weir integration points exist but are not yet wired to the finished components above. |
-| `experiments/` | V0.1 synthetic evidence | Contention V0.1 synthetic pipeline implemented (generate → masked-only train → UMAP → silhouette 0.30, no policy labels). Real Norn campaign pending. V0.2/V0.3 still scaffolded. |
+### Instrumentation overhead (macOS arm64)
+
+Per-event cost of `YGG_EVENT` emission, measured by `instrumentation/bench`:
+
+| Scenario | Threads | p50 | p95 | p99 | Dropped |
+|---|---|---:|---:|---:|---:|
+| baseline (no events) | 1 | 5 ns | 5 ns | 5 ns | 0 |
+| event, collector stopped | 1 | 7 ns | 63 ns | 88 ns | 936k / 1M |
+| event, collector draining | 1 | 80 ns | 82 ns | 108 ns | 0 |
+| ring at capacity | 1 | 9 ns | 61 ns | 80 ns | 936k / 1M |
+| multi-threaded draining | 4 | 103 ns | 223 ns | 979 ns | 0 |
+| multi-threaded draining | 8 | 82 ns | 285 ns | 2015 ns | 0 |
+
+The active-path cost is ~80 ns/event single-threaded. The p99 tail grows sharply under concurrent emission (~2 us at 8 threads); that tail is itself a study target.
+
+Source: [instrumentation/bench/results.json](instrumentation/bench/results.json), plotted in [figures/overhead.svg](figures/overhead.svg).
+
+### Learned representations: what worked and what did not
+
+| Study | Data | Result |
+|---|---|---|
+| Synthetic contention regimes | generated traces | silhouette **+0.30** - regimes separate under masked-only training |
+| Blind policy-switch localization | injected switch | detected 0.028 s vs true 0.028 s (**0.06% error**), BOCPD independently at 0.019 s |
+| Real Norn regimes, objective ablation | 160 captured traces (10 runs x 16 cells) | all five objective variants land at **-0.06 to -0.09**: adding timing / argument / contrastive supervision does not rescue separation |
+
+The honest reading: on application-level events alone, real backoff policies do not separate regardless of self-supervised objective. The discriminating signal likely lives at the system level (scheduler, preemption, migration), which requires the Linux eBPF path. Full analysis: [figures/README.md](figures/README.md).
 
 ## Components
 
-| Component | Language | Purpose |
-|-----------|----------|---------|
-| `collector/` | Rust + eBPF | Kernel/system trace collection |
-| `instrumentation/` | C++20 | Application event emission (zero-overhead) |
-| `schema/` | Rust (`ygg-schema`) | Event schema & Arrow/Parquet serialization |
-| `model/` | JAX + Flax | Representation learning |
-| `analysis/` | Python | Clustering, divergence, attribution |
-| `integrations/` | Various | Kiln, Loki, Norn, Weir, Orda |
-
-## Data Flow
-
-```
-Application (YGG_EVENT)          Kernel (eBPF)
-        │                             │
-        ▼                             ▼
-┌───────────────┐              ┌───────────────┐
-│ Thread-local  │              │ Per-CPU ring  │
-│ ring buffer   │              │ buffer        │
-└───────┬───────┘              └───────┬───────┘
-        │                              │
-        └──────────────┬───────────────┘
-                       ▼
-              ┌───────────────┐
-              │ Rust collector│
-              │ (mmap + poll) │
-              └───────┬───────┘
-                      ▼
-              ┌───────────────┐
-              │ Arrow/Parquet │
-              │ (ZSTD comp.)  │
-              └───────┬───────┘
-                      ▼
-              ┌───────────────┐
-              │  JAX model    │
-              │ (Transformer) │
-              └───────┬───────┘
-                      ▼
-              ┌───────────────┐
-              │ Embeddings →  │
-              │ Analysis CLI  │
-              └───────────────┘
-```
-
-## Self-Supervised Objectives
-
-1. **Masked Event Modeling** — predict masked events in a sequence
-2. **Next-Event Prediction** — predict likely next events; divergence = anomaly
-3. **Contrastive Execution Learning** — healthy executions close, failures separate
-4. **Temporal Consistency** — adjacent windows evolve smoothly; jumps = phase transitions
-
-## Research Questions
-
-- **RQ1:** Can self-supervised models learn reusable representations of concurrent system execution?
-- **RQ2:** Do learned representations separate workload changes from actual failure modes?
-- **RQ3:** Can behavioral embeddings identify previously unseen faults?
-- **RQ4:** Can the model locate the transition point between healthy and pathological execution?
-- **RQ5:** Do models trained on one stra-ta system transfer to another?
-
-## Philosophy
-
-- No LLM log summarization
-- No generic OpenTelemetry ingestion
-- No cloud monitoring dashboards
-- No "AI observability" SaaS nonsense
-
-Ygg is a **research instrument**. Think: `perf` met representation learning and developed opinions about causality.
-
-## Documentation
-
-- [ARCHITECTURE.md](docs/ARCHITECTURE.md) — system design, data model, collector/instrumentation architecture, milestones.
-- [DEVELOPMENT.md](DEVELOPMENT.md) — build, test, and run instructions.
+| Component | Language | State | Purpose |
+|-----------|----------|-------|---------|
+| `collector/` | Rust + eBPF | Implemented | Kernel/system trace collection. Linux-only telemetry; macOS build is a no-op. |
+| `instrumentation/` | C++20 | Implemented | Application event emission via thread-local SPSC rings and shared memory. 2/2 tests pass. |
+| `schema/` | Rust (`ygg-schema`) | Implemented | Event schema, Arrow/Parquet serialization. |
+| `model/` | JAX + Flax | Implemented | Hierarchical transformer encoder, six self-supervised objectives, training + checkpointing. |
+| `analysis/` | Python | Implemented | DTW divergence, PELT/BOCPD change points, clustering, attribution, SVG figures. |
+| `experiments/` | Python | Active | Versioned campaign definitions. Contention campaign has synthetic evidence plus a real Norn run and a V0.2 ablation. |
+| `integrations/` | various | Scaffolded | Kiln/Loki/Norn/Weir points exist, not yet wired. |
 
 ## Development
 
 ```bash
-# Build the Rust workspace release artifacts (Linux recommended for eBPF/perf)
-cargo build --release
-
-# Run the instrumentation crate's tests
-cargo test -p ygg-instrumentation --release
-
-# Confirm the model training entry point loads
-python -m model.train --help
-
-# Confirm the analysis package imports
-python -c "import analysis"
+cargo build --release                          # Rust workspace
+cargo test -p ygg-instrumentation --release    # instrumentation tests
+python -m pytest tests/ -q                     # model/objective tests (19)
+python experiments/contention/train_synthetic.py   # end-to-end V0.1 pipeline
 ```
 
-See [DEVELOPMENT.md](DEVELOPMENT.md) for full build, test, and run instructions.
+See [DEVELOPMENT.md](DEVELOPMENT.md) for full instructions.
+
+## Reproducing the studies
+
+```sh
+cd experiments/contention/real
+N_RUNS=10 bash run_capture.sh        # capture 160 traces from the local Norn library (~12 min)
+python3 train_v02.py --variant event --epochs 12
+python3 run_ablation.py              # trains missing variants, writes table + figure
+```
+
+Every figure in [figures/](figures/) links to its generator script and raw data. Figures are regenerated, never hand-edited.
+
+## Documentation
+
+- [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) - system design, data model, component architecture, milestones.
+- [docs/TRACE-MODEL.md](docs/TRACE-MODEL.md) - fixed-width event record shared by collector, instrumentation, and model.
+- [docs/REPRESENTATION.md](docs/REPRESENTATION.md) - token composition and the hierarchical encoder design.
+- [docs/EXPERIMENTS.md](docs/EXPERIMENTS.md) - experiment framework: how campaigns pin model, data, and validation to a hypothesis.
+- [figures/README.md](figures/README.md) - every figure with its generator, source data, and honest interpretation.
+- [DEVELOPMENT.md](DEVELOPMENT.md) - build, test, run.
+
+## Limitations
+
+- Kernel telemetry (eBPF, perf counters) is Linux-only. On macOS, only application-level events are available, which the V0.2 ablation shows is insufficient to separate real backoff regimes.
+- The CLI commands described in ARCHITECTURE.md describe the target interface, not shipped behavior.
+- Integrations with Kiln/Loki/Norn/Weir are scaffolded, not wired.
 
 ## License
 
-MIT — but the aura is proprietary.
+MIT
