@@ -1,0 +1,12 @@
+[package]
+name = "ygg-schema"
+version = "0.1.0"
+edition = "2021"
+description = "Ygg event schema and Arrow/Parquet definitions"
+
+[dependencies]
+arrow = { workspace = true }
+parquet = { workspace = true }
+flatbuffers = "23.5.26"
+serde = { version = "1.0", features = ["derive"] }
+thiserror = { workspace = true }

@@ -1,0 +1,52 @@
+# Rust
+/target/
+**/*.rs.bk
+Cargo.lock
+
+# Python
+__pycache__/
+*.pyc
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+*.egg-info/
+dist/
+build/
+.venv/
+venv/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+
+# eBPF
+collector/ebpf/vmlinux.h
+collector/target/bpfel-unknown-none/
+
+# Build artifacts
+*.o
+*.so
+*.dylib
+*.dll
+
+# Checkpoints
+checkpoints/
+*.ckpt
+
+# Data
+*.parquet
+*.arrow
+data/
+campaigns/
+
+# Logs
+*.log
+tracing/
+
+# C++ build
+instrumentation/build/

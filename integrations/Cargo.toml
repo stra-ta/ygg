@@ -1,0 +1,10 @@
+[package]
+name = "ygg-integrations"
+version = "0.1.0"
+edition = "2021"
+description = "Ygg integrations with stra-ta stack"
+
+[dependencies]
+anyhow = { workspace = true }
+tokio = { workspace = true }
+tracing = { workspace = true }

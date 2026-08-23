@@ -1,0 +1,25 @@
+[package]
+name = "ygg-collector"
+version = "0.1.0"
+edition = "2021"
+description = "Ygg eBPF/perf trace collector"
+
+[dependencies]
+aya = { workspace = true, features = ["async-tokio"] }
+arrow = { workspace = true }
+parquet = { workspace = true }
+tokio = { workspace = true }
+anyhow = { workspace = true }
+clap = { workspace = true }
+tracing = { workspace = true }
+tracing-subscriber = { workspace = true }
+thiserror = { workspace = true }
+byteorder = { workspace = true }
+nix = { workspace = true }
+libc = { workspace = true }
+parking_lot = { workspace = true }
+crossbeam = { workspace = true }
+ygg-schema = { path = "../schema" }
+
+[build-dependencies]
+aya-build = { version = "0.12", features = ["async-tokio"] }

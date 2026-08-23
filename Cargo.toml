@@ -1,0 +1,30 @@
+[workspace]
+resolver = "2"
+members = [
+    "collector",
+    "instrumentation",
+]
+
+[workspace.dependencies]
+aya = { version = "0.12", features = ["async-tokio"] }
+arrow = { version = "51.0", features = ["parquet", "compute", "flight"] }
+parquet = { version = "51.0", features = ["snappy", "zstd"] }
+tokio = { version = "1.38", features = ["rt-multi-thread", "macros", "sync"] }
+anyhow = "1.0"
+clap = { version = "4.5", features = ["derive", "env"] }
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter", "fmt"] }
+thiserror = "1.0"
+byteorder = "1.5"
+nix = "0.28"
+libc = "0.2"
+parking_lot = "0.12"
+crossbeam = "0.8"
+
+[profile.release]
+lto = true
+codegen-units = 1
+strip = true
+
+[profile.dev]
+debug = true

@@ -1,0 +1,68 @@
+namespace ygg;
+
+enum EventKind: uint16 {
+    // Application events (user-defined, offset by 1000)
+    AppBase = 1000,
+
+    // Syscall events
+    SysEnter = 2000,
+    SysExit = 2001,
+
+    // Scheduler events
+    SchedSwitch = 3000,
+    SchedWakeup = 3001,
+    SchedMigrate = 3002,
+
+    // Block I/O events
+    BlockRqIssue = 4000,
+    BlockRqComplete = 4001,
+
+    // Network events
+    TcpSendmsg = 5000,
+    TcpRecvmsg = 5001,
+
+    // Memory events
+    PageFault = 6000,
+    PageFaultMajor = 6001,
+
+    // Hardware counter events (sampled)
+    PerfCycles = 7000,
+    PerfInstructions = 7001,
+    PerfCacheMisses = 7002,
+    PerfBranchMisses = 7003,
+    PerfContextSwitches = 7004,
+
+    // Loki fault injection events
+    LokiInject = 8000,
+
+    // Custom application events (registered at runtime)
+    Custom = 9000,
+}
+
+struct Event {
+    timestamp_ns: ulong;
+    cpu: uint;
+    pid: uint;
+    tid: uint;
+    kind: EventKind;
+    arg0: ulong;
+    arg1: ulong;
+    arg2: ulong;
+}
+
+struct ExecutionMetadata {
+    git_sha: string;
+    machine_fingerprint: string;
+    kernel_version: string;
+    compiler: string;
+    workload: string;
+    loki_fault_plan: string;
+}
+
+table Execution {
+    metadata: ExecutionMetadata;
+    events: [Event];
+    labels: [string]; // optional known fault, experiment outcome
+}
+
+root_type Execution;
