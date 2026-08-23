@@ -1,0 +1,14 @@
+{
+  "n_windows": 3200,
+  "n_regimes": 4,
+  "method": "umap",
+  "silhouette_overall": -0.31262102723121643,
+  "silhouette_by_regime": {
+    "tight": -0.3550325036048889,
+    "yield": 0.3018535375595093,
+    "bounded": -0.9621113538742065,
+    "exponential": -0.23519380390644073
+  },
+  "separated": false,
+  "note": "Window-level embeddings from the label-free V0.1 encoder. Positive silhouette => regimes form distinct clusters without any policy labels."
+}

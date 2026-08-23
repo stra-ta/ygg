@@ -39,6 +39,7 @@ collector/target/bpfel-unknown-none/
 checkpoints/
 *.ckpt
 *.msgpack
+*.msgpack
 
 # Data
 *.parquet
@@ -52,3 +53,5 @@ tracing/
 
 # C++ build
 instrumentation/build/
+# Raw capture spill files (large binaries; Parquet derivatives are kept)
+*.events

@@ -75,9 +75,18 @@ def events_to_tokens(
     dt = np.clip(dt, 1, max_dt_ns).astype(np.float32)
     tokens[:, 3] = np.log(dt)
 
-    tokens[:, 4] = (events[:, 5] / metric_scale).astype(np.float32)     # arg0
-    tokens[:, 5] = (events[:, 6] / metric_scale).astype(np.float32)     # arg1
-    tokens[:, 6] = (events[:, 7] / metric_scale).astype(np.float32)     # arg2
+    # Metric args (arg0/1/2). Real telemetry can carry sentinel / uninitialised
+    # values (e.g. 2**63, 2**64-1) or NaN from missing fields. A single garbage
+    # cell divided by ``metric_scale`` would explode the activations and blow up
+    # the gradients to NaN, so clip to a sane bound and scrub non-finite values.
+    METRIC_CLIP = 1e9
+    args = np.nan_to_num(
+        events[:, 5:8], nan=0.0, posinf=METRIC_CLIP, neginf=0.0
+    ).astype(np.float32)
+    args = np.clip(args, 0.0, METRIC_CLIP)
+    tokens[:, 4] = (args[:, 0] / metric_scale).astype(np.float32)     # arg0
+    tokens[:, 5] = (args[:, 1] / metric_scale).astype(np.float32)     # arg1
+    tokens[:, 6] = (args[:, 2] / metric_scale).astype(np.float32)     # arg2
     return tokens
 
 

@@ -1,0 +1,8 @@
+{
+  "n_events": 20000,
+  "true_switch_event_index": 10000,
+  "true_switch_timestamp_ns": 27552230,
+  "total_duration_ns": 82404211,
+  "healthy_path": "healthy.parquet",
+  "switched_path": "switched.parquet"
+}
