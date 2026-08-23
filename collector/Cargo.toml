@@ -5,10 +5,9 @@ edition = "2021"
 description = "Ygg eBPF/perf trace collector"
 
 [dependencies]
-aya = { workspace = true, features = ["async-tokio"] }
-arrow = { workspace = true }
-parquet = { workspace = true }
-tokio = { workspace = true }
+arrow = { version = "51" }
+parquet = { version = "51", features = ["arrow", "zstd"] }
+tokio = { version = "1.38", features = ["rt-multi-thread", "macros", "sync", "signal", "time"] }
 anyhow = { workspace = true }
 clap = { workspace = true }
 tracing = { workspace = true }
@@ -17,9 +16,15 @@ thiserror = { workspace = true }
 byteorder = { workspace = true }
 nix = { workspace = true }
 libc = { workspace = true }
+# Pin chrono to 0.4.39: chrono 0.4.40 added `Datelike::quarter`, which clashes
+# with `arrow-arith` 51.0.0's own `quarter` (compile error E0034). This version
+# also unifies chrono for the whole dependency graph.
+chrono = "=0.4.39"
 parking_lot = { workspace = true }
 crossbeam = { workspace = true }
 ygg-schema = { path = "../schema" }
 
-[build-dependencies]
-aya-build = { version = "0.12", features = ["async-tokio"] }
+# aya only compiles on Linux. Gate it to the Linux target so the crate (and the
+# data path) still builds on other hosts, where the eBPF/perf code is a no-op.
+[target.'cfg(target_os = "linux")'.dependencies]
+aya = { version = "0.12", features = ["async_tokio"] }

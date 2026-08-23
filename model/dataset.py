@@ -1,45 +1,46 @@
 """
-Ygg Dataset Loader
+Ygg dataset loader.
 
-Loads Parquet traces into JAX-compatible format for training.
+Turns Kiln/collector Parquet traces into training batches for the four
+objectives. Features:
+
+* Streaming reader (Polars -> numpy -> JAX) that processes one Parquet file at a
+  time, so arbitrarily large campaigns fit in memory.
+* Dynamic segment sampling: each window is drawn from a *random* offset rather
+  than a fixed stride.
+* Contrastive pairing from Kiln campaign structure: healthy-healthy positives
+  and healthy-corrupted negatives.
 """
 
 import jax.numpy as jnp
 import numpy as np
 import polars as pl
 from pathlib import Path
-from typing import Iterator, Tuple, List, Optional
+from typing import Iterator, List, Dict, Optional, Tuple
 from dataclasses import dataclass
+
+
+# Token layout (must match model.encoder.TokenEmbedding):
+#   [event_type, thread, cpu, log_dt, arg0, arg1, arg2]
+TOKEN_DIM = 7
 
 
 @dataclass
 class TraceSegment:
-    """A contiguous segment of events from a single execution."""
-    events: jnp.ndarray          # [seq_len, 8] - timestamp, cpu, pid, tid, kind, arg0, arg1, arg2
-    metadata: dict               # Execution metadata
-    start_idx: int               # Global event index
-    end_idx: int                 # Global event index (exclusive)
+    """A contiguous window of events from one execution."""
+    tokens: np.ndarray          # [window_size, TOKEN_DIM]
+    mask: np.ndarray            # [window_size]  (1 real, 0 padding)
+    trace_id: int               # id of the source trace / run
+    corrupt: bool               # True if this segment is from a faulted run
 
 
-@dataclass
-class Batch:
-    """Training batch."""
-    tokens: jnp.ndarray          # [batch, seq_len, token_dim]
-    mask: jnp.ndarray            # [batch, seq_len] - 1 for real, 0 for padding
-    labels: Optional[jnp.ndarray] = None  # For supervised objectives
+def load_trace(path: str) -> pl.DataFrame:
+    return pl.read_parquet(path)
 
 
-def load_trace(parquet_path: str) -> pl.DataFrame:
-    """Load a single Parquet trace file."""
-    return pl.read_parquet(parquet_path)
-
-
-def load_campaign(campaign_dir: str) -> List[pl.DataFrame]:
-    """Load all traces from a Kiln campaign directory."""
-    traces = []
-    for p in Path(campaign_dir).glob("*/ygg.trace.parquet"):
-        traces.append(pl.read_parquet(p))
-    return traces
+def load_campaign(campaign_dir: str) -> List[str]:
+    """All ygg.trace.parquet files under a Kiln campaign directory."""
+    return [str(p) for p in Path(campaign_dir).glob("**/ygg.trace.parquet")]
 
 
 def events_to_tokens(
@@ -47,189 +48,295 @@ def events_to_tokens(
     event_type_vocab: int = 10000,
     thread_bucket_size: int = 256,
     cpu_count: int = 64,
-    max_dt_ns: int = 1_000_000_000,  # 1 second
+    max_dt_ns: int = 1_000_000_000,
     metric_scale: float = 1e6,
 ) -> np.ndarray:
-    """
-    Convert raw events to token embeddings.
+    """Raw event rows -> composed token matrix [seq_len, TOKEN_DIM].
 
-    Each event becomes a composed token:
-    - event_type_embedding [event_type_vocab]
-    - thread_embedding [thread_bucket_size]
-    - cpu_embedding [cpu_count]
-    - dt_projection [1] - log-scaled time delta
-    - metric_projection [3] - scaled arg0, arg1, arg2
-
-    Returns: [seq_len, token_dim]
+    Expected ``events`` columns:
+        [timestamp_ns, cpu, pid, tid, kind, arg0, arg1, arg2]
+    Output columns:
+        [0] event_type (kind)
+        [1] thread (tid bucketed to 256)
+        [2] cpu id
+        [3] log-scaled time delta (clipped to [1ns, 1s])
+        [4] arg0 / scale
+        [5] arg1 / scale
+        [6] arg2 / scale
     """
     seq_len = events.shape[0]
-    token_dim = 5  # Will be projected to d_model by embedding layer
+    tokens = np.zeros((seq_len, TOKEN_DIM), dtype=np.float32)
 
-    tokens = np.zeros((seq_len, token_dim), dtype=np.float32)
+    tokens[:, 0] = events[:, 4].astype(np.float32)                       # kind
+    tokens[:, 1] = (events[:, 3] % thread_bucket_size).astype(np.float32)  # tid
+    tokens[:, 2] = events[:, 1].astype(np.float32)                      # cpu
 
-    # Event type (categorical)
-    tokens[:, 0] = events[:, 4]  # kind
-
-    # Thread ID (bucketed)
-    tokens[:, 1] = (events[:, 3] % thread_bucket_size).astype(np.float32)
-
-    # CPU ID
-    tokens[:, 2] = events[:, 1].astype(np.float32)
-
-    # Time delta (log-scaled)
     dt = np.diff(events[:, 0], prepend=events[0, 0])
-    dt = np.clip(dt, 1, max_dt_ns)
-    tokens[:, 3] = np.log(dt.astype(np.float32))
+    dt = np.clip(dt, 1, max_dt_ns).astype(np.float32)
+    tokens[:, 3] = np.log(dt)
 
-    # Metrics (scaled)
-    tokens[:, 4] = (events[:, 5] / metric_scale).astype(np.float32)  # arg0
-
+    tokens[:, 4] = (events[:, 5] / metric_scale).astype(np.float32)     # arg0
+    tokens[:, 5] = (events[:, 6] / metric_scale).astype(np.float32)     # arg1
+    tokens[:, 6] = (events[:, 7] / metric_scale).astype(np.float32)     # arg2
     return tokens
 
 
-def create_segments(
-    events: np.ndarray,
-    segment_len: int = 512,
-    stride: int = 256,
+# ---------------------------------------------------------------------------
+# Contrastive pair discovery from Kiln campaign structure
+# ---------------------------------------------------------------------------
+
+def _is_corrupt(path: str) -> bool:
+    """Heuristic: a path/run is 'corrupted' if its directory or metadata names
+    a fault / degradation scenario."""
+    low = path.lower()
+    markers = ("corrupt", "fault", "degrad", "broken", "error", "anomal")
+    if any(m in low for m in markers):
+        return True
+    # Explicit meta.json flag if present.
+    parent = Path(path).parent
+    meta = parent / "meta.json"
+    if meta.exists():
+        try:
+            import json
+
+            d = json.loads(meta.read_text())
+            if str(d.get("health", "")).lower() in ("corrupt", "fault", "degraded"):
+                return True
+            if str(d.get("health", "")).lower() in ("healthy", "baseline", "control"):
+                return False
+        except Exception:
+            pass
+    return False
+
+
+def split_campaign(campaign_dir: str) -> Tuple[List[str], List[str]]:
+    """Return (healthy_paths, corrupt_paths) from a Kiln campaign dir."""
+    paths = load_campaign(campaign_dir)
+    healthy, corrupt = [], []
+    for p in paths:
+        (corrupt if _is_corrupt(p) else healthy).append(p)
+    # If nothing was flagged corrupt, treat the first run as the healthy
+    # baseline and let cross-trace negatives serve as the "other" class.
+    return healthy, corrupt
+
+
+# ---------------------------------------------------------------------------
+# Streaming dataset
+# ---------------------------------------------------------------------------
+
+def _sample_windows(
+    tokens_full: np.ndarray,
+    seq_len: int,
+    n_windows: int,
+    rng: np.random.Generator,
+    trace_id: int,
+    corrupt: bool,
 ) -> List[TraceSegment]:
-    """Split events into overlapping segments."""
-    segments = []
-    for start in range(0, len(events) - segment_len + 1, stride):
-        end = start + segment_len
-        seg_events = events[start:end]
-        segments.append(TraceSegment(
-            events=jnp.array(seg_events),
-            metadata={},
-            start_idx=start,
-            end_idx=end,
-        ))
-    return segments
+    S = tokens_full.shape[0]
+    out: List[TraceSegment] = []
+    if S == 0:
+        return out
+    for _ in range(n_windows):
+        if S >= seq_len:
+            start = int(rng.integers(0, S - seq_len + 1))
+            w = tokens_full[start:start + seq_len].astype(np.float32)
+            mask = np.ones(seq_len, dtype=np.float32)
+        else:
+            w = np.zeros((seq_len, TOKEN_DIM), dtype=np.float32)
+            w[:S] = tokens_full.astype(np.float32)
+            mask = np.zeros(seq_len, dtype=np.float32)
+            mask[:S] = 1.0
+        out.append(TraceSegment(w, mask, trace_id, corrupt))
+    return out
 
 
-class TraceDataset:
-    """Iterable dataset for training."""
+def _mask_labels(
+    tokens: np.ndarray,
+    mask: np.ndarray,
+    mask_ratio: float,
+    mask_token_id: int,
+    rng: np.random.Generator,
+) -> Tuple[np.ndarray, np.ndarray]:
+    """Build (masked_tokens, labels) for masked event modeling.
+
+    Returns masked token matrix and a label matrix of event types where masked
+    positions carry the true id and everything else is -1.
+    """
+    B, S, _ = tokens.shape
+    labels = -np.ones((B, S), dtype=np.int32)
+    masked = tokens.copy()
+    for b in range(B):
+        real = np.where(mask[b] > 0)[0]
+        if real.size == 0:
+            continue
+        n = max(1, int(real.size * mask_ratio))
+        choice = rng.choice(real, size=n, replace=False)
+        labels[b, choice] = tokens[b, choice, 0].astype(np.int32)
+        masked[b, choice, 0] = mask_token_id
+    return masked, labels
+
+
+def _next_labels(tokens: np.ndarray) -> np.ndarray:
+    """Shift event types left by one; last position is -1 (no target)."""
+    B, S, _ = tokens.shape
+    lab = np.concatenate(
+        [tokens[:, 1:, 0].astype(np.int32), -np.ones((B, 1), dtype=np.int32)],
+        axis=1,
+    )
+    return lab
+
+
+def collate(
+    windows: List[TraceSegment],
+    mask_ratio: float,
+    mask_token_id: int,
+    rng: np.random.Generator,
+) -> Dict[str, jnp.ndarray]:
+    """Assemble a training batch dict from a list of windows."""
+    tokens = np.stack([w.tokens for w in windows])
+    mask = np.stack([w.mask for w in windows])
+    trace_ids = np.array([w.trace_id for w in windows])
+    corrupt = np.array([w.corrupt for w in windows])
+
+    masked_tokens, masked_labels = _mask_labels(
+        tokens, mask, mask_ratio, mask_token_id, rng
+    )
+    next_labels = _next_labels(tokens)
+
+    # Contrastive triples: anchor = this window; positive = another window from
+    # the *same* trace (healthy-healthy); negative = a window from a *different*
+    # (preferably corrupted) trace.
+    B = len(windows)
+    anchor_tokens, anchor_mask = tokens, mask
+    pos_tokens = tokens.copy()
+    neg_tokens = tokens.copy()
+    neg_mask = mask.copy()
+    for b in range(B):
+        same = np.where((trace_ids == trace_ids[b]) & (np.arange(B) != b))[0]
+        diff = np.where(trace_ids != trace_ids[b])[0]
+        # Prefer a corrupted window for the negative.
+        diff_corrupt = np.where((trace_ids != trace_ids[b]) & corrupt)[0]
+        if same.size:
+            j = rng.integers(0, same.size)
+            pos_tokens[b] = tokens[same[j]]
+        if diff_corrupt.size:
+            j = rng.integers(0, diff_corrupt.size)
+            neg_tokens[b] = tokens[diff_corrupt[j]]
+            neg_mask[b] = mask[diff_corrupt[j]]
+        elif diff.size:
+            j = rng.integers(0, diff.size)
+            neg_tokens[b] = tokens[diff[j]]
+            neg_mask[b] = mask[diff[j]]
+
+    return {
+        "tokens": jnp.asarray(tokens),
+        "mask": jnp.asarray(mask),
+        "masked_tokens": jnp.asarray(masked_tokens),
+        "masked_labels": jnp.asarray(masked_labels),
+        "next_labels": jnp.asarray(next_labels),
+        "anchor_tokens": jnp.asarray(anchor_tokens),
+        "anchor_mask": jnp.asarray(anchor_mask),
+        "pos_tokens": jnp.asarray(pos_tokens),
+        "pos_mask": jnp.asarray(mask),
+        "neg_tokens": jnp.asarray(neg_tokens),
+        "neg_mask": jnp.asarray(neg_mask),
+        "corrupt": jnp.asarray(corrupt),
+    }
+
+
+class StreamingTraceDataset:
+    """Streaming, dynamically-sampled dataset yielding training batch dicts.
+
+    ``seq_len`` is the full sequence length fed to the model (normally
+    ``n_windows * window_size``) so the hierarchical encoder sees several
+    adjacent windows per sample.
+    """
 
     def __init__(
         self,
-        trace_paths: List[str],
-        segment_len: int = 512,
-        stride: int = 256,
+        healthy_paths: List[str],
+        corrupt_paths: Optional[List[str]] = None,
+        seq_len: int = 2048,
         batch_size: int = 32,
-        shuffle: bool = True,
+        mask_ratio: float = 0.15,
+        mask_token_id: int = 0,
+        seed: int = 42,
+        windows_per_file: int = 256,
+        epochs: int = 1,
     ):
-        self.trace_paths = trace_paths
-        self.segment_len = segment_len
-        self.stride = stride
+        self.healthy_paths = list(healthy_paths)
+        self.corrupt_paths = list(corrupt_paths or [])
+        self.seq_len = seq_len
         self.batch_size = batch_size
-        self.shuffle = shuffle
-        self._segments = []
+        self.mask_ratio = mask_ratio
+        self.mask_token_id = mask_token_id
+        self.seed = seed
+        self.windows_per_file = windows_per_file
+        self.epochs = epochs
 
-    def __iter__(self) -> Iterator[Batch]:
-        # Load all segments
-        for path in self.trace_paths:
-            df = load_trace(path)
-            events = df.select([
-                "timestamp_ns", "cpu", "pid", "tid", "kind",
-                "arg0", "arg1", "arg2"
-            ]).to_numpy()
-            tokens = events_to_tokens(events)
-            segments = create_segments(tokens, self.segment_len, self.stride)
-            self._segments.extend(segments)
-
-        if self.shuffle:
-            np.random.shuffle(self._segments)
-
-        # Yield batches
-        for i in range(0, len(self._segments), self.batch_size):
-            batch_segments = self._segments[i:i + self.batch_size]
-            if len(batch_segments) < self.batch_size:
-                continue
-
-            batch_tokens = jnp.stack([jnp.array(s.events) for s in batch_segments])
-            batch_mask = jnp.ones((self.batch_size, self.segment_len))
-
-            yield Batch(tokens=batch_tokens, mask=batch_mask)
-
-    def __len__(self) -> int:
-        return len(self._segments) // self.batch_size
-
-
-def masked_event_modeling_batch(
-    batch: Batch,
-    mask_ratio: float = 0.15,
-    mask_token_id: int = 0,
-    vocab_size: int = 10000,
-) -> Tuple[Batch, jnp.ndarray]:
-    """
-    Prepare batch for masked event modeling (BERT-style).
-
-    Returns: (masked_batch, labels)
-    """
-    tokens = batch.tokens
-    batch_size, seq_len, _ = tokens.shape
-
-    # Create mask
-    mask = jnp.zeros_like(tokens[:, :, 0], dtype=bool)
-    for b in range(batch_size):
-        n_mask = int(seq_len * mask_ratio)
-        mask_indices = np.random.choice(seq_len, n_mask, replace=False)
-        mask = mask.at[b, mask_indices].set(True)
-
-    # Labels are the original event types at masked positions
-    labels = jnp.where(mask, tokens[:, :, 0], -1)
-
-    # Replace masked tokens with [MASK] token
-    masked_tokens = tokens.at[:, :, 0].set(
-        jnp.where(mask, mask_token_id, tokens[:, :, 0])
-    )
-
-    return Batch(tokens=masked_tokens, mask=batch.mask), labels
-
-
-def next_event_prediction_batch(
-    batch: Batch,
-) -> Tuple[Batch, jnp.ndarray]:
-    """
-    Prepare batch for next-event prediction (GPT-style).
-
-    Returns: (input_batch, next_event_labels)
-    """
-    tokens = batch.tokens
-    # Input: all but last
-    inputs = tokens[:, :-1, :]
-    # Labels: event types of next positions
-    labels = tokens[:, 1:, 0]
-
-    return Batch(tokens=inputs, mask=batch.mask[:, :-1]), labels
-
-
-def contrastive_pairs(
-    healthy_traces: List[str],
-    corrupted_traces: List[str],
-    segment_len: int = 512,
-    stride: int = 256,
-) -> Iterator[Tuple[Batch, Batch, jnp.ndarray]]:
-    """
-    Generate contrastive pairs for Objective 3.
-
-    Yields: (anchor_batch, positive_batch, negative_batch), labels
-    where labels = 1 for (anchor, positive), 0 for (anchor, negative)
-    """
-    healthy_dataset = TraceDataset(healthy_traces, segment_len, stride, shuffle=False)
-    corrupted_dataset = TraceDataset(corrupted_traces, segment_len, stride, shuffle=False)
-
-    healthy_iter = iter(healthy_dataset)
-    corrupted_iter = iter(corrupted_dataset)
-
-    while True:
+    def _iter_file(self, path: str, trace_id: int, corrupt: bool, rng):
         try:
-            anchor = next(healthy_iter)
-            positive = next(healthy_iter)
-            negative = next(corrupted_iter)
+            df = load_trace(path)
+        except Exception as e:
+            print(f"[dataset] skipping {path}: {e}")
+            return []
+        cols = ["timestamp_ns", "cpu", "pid", "tid", "kind", "arg0", "arg1", "arg2"]
+        present = [c for c in cols if c in df.columns]
+        events = df.select(present).to_numpy()
+        # Pad missing metric columns with zeros.
+        if events.shape[1] < 8:
+            pad = np.zeros((events.shape[0], 8 - events.shape[1]), dtype=events.dtype)
+            events = np.concatenate([events, pad], axis=1)
+        tokens_full = events_to_tokens(events)
+        return _sample_windows(
+            tokens_full, self.seq_len, self.windows_per_file, rng, trace_id, corrupt
+        )
 
-            # Labels: 1 for similar, 0 for dissimilar
-            labels = jnp.array([1] * len(anchor.tokens) + [0] * len(anchor.tokens))
+    def __iter__(self) -> Iterator[Dict[str, jnp.ndarray]]:
+        for epoch in range(self.epochs):
+            rng = np.random.default_rng(self.seed + epoch)
+            file_order = self.healthy_paths[:]
+            rng.shuffle(file_order)
 
-            yield anchor, positive, negative, labels
-        except StopIteration:
-            break
+            # Pre-load corrupt segments once per epoch (usually small).
+            corrupt_segs: List[TraceSegment] = []
+            for i, p in enumerate(self.corrupt_paths):
+                corrupt_segs.extend(self._iter_file(p, 100000 + i, True, rng))
+
+            all_segs: List[TraceSegment] = []
+            tid = 0
+            for p in file_order:
+                segs = self._iter_file(p, tid, False, rng)
+                tid += 1
+                if corrupt_segs:
+                    # Inject corrupt windows so negatives can be true faults.
+                    all_segs.extend(segs)
+                    all_segs.extend(
+                        rng.choice(
+                            corrupt_segs,
+                            size=min(len(segs), len(corrupt_segs)),
+                            replace=len(corrupt_segs) < len(segs),
+                        ).tolist()
+                        if corrupt_segs
+                        else []
+                    )
+                else:
+                    all_segs.extend(segs)
+
+            rng.shuffle(all_segs)
+            for i in range(0, len(all_segs), self.batch_size):
+                chunk = all_segs[i:i + self.batch_size]
+                if len(chunk) < self.batch_size:
+                    continue
+                yield collate(
+                    chunk, self.mask_ratio, self.mask_token_id, rng
+                )
+
+
+@dataclass
+class Batch:
+    """Lightweight batch container (legacy API)."""
+
+    tokens: jnp.ndarray
+    mask: jnp.ndarray
+    labels: Optional[jnp.ndarray] = None

@@ -451,3 +451,19 @@ ygg/
 - Train: Norn + Weir
 - Evaluate: Orda
 - Test: contention/failure structure transfer
+
+## Current Implementation Status
+
+This section reflects what is actually built today (see `README.md` for working commands). It augments, not replaces, the vision above.
+
+| Component | State | Key facts |
+|-----------|-------|-----------|
+| Collector | Implemented | Rust + eBPF (aya) + `perf_event_open`; files `main.rs`, `ebpf.rs`, `perf.rs`, `writer.rs`, `schema.rs`. Linux-only (macOS no-op). `cargo build --release` works. `schema.rs` is being replaced by `ygg-schema`. |
+| Instrumentation | Implemented | C++20 `ygg.h` + C sources + Rust FFI (`lib.rs`) built via `build.rs` (cc). Thread-local SPSC ring buffers, `/dev/shm/ygg-<pid>`, 100ms TSC calibration, single collector pthread with Unix socket + spill-file fallback. 2/2 tests pass. |
+| Schema | Implemented | `ygg-schema` Rust crate: `Event`, `EventKind`, Arrow/Parquet schemas. Resolved as part of the cargo workspace build graph. |
+| Model | Implemented | JAX/Flax: `config.py`, `encoder.py`, `hierarchical.py`, `objectives.py` (4 losses), `dataset.py` (streaming Parquet, Kiln discovery), `train.py` (multi-objective, validation, checkpointing, pmap). `python -m model.train --help` works. |
+| Analysis | Implemented | `divergence.py` (DTW, PELT/BOCPD, sustained divergence), `clustering.py` (HDBSCAN, UMAP/PCA, FAISS), `attribution.py` (integrated gradients), `viz.py` (static SVGs). `python -c "import analysis"` works. |
+| Integrations | Scaffolded | Kiln/Loki/Norn/Weir points exist but not yet wired to finished components. |
+| Experiments | Scaffolded | Contention / storage-stall / workload-shift campaign directories. |
+
+> The `ygg record/inspect/diff/neighbors/cluster/embed/explain` CLI commands and the example outputs above describe the target interface, not yet-implemented behavior.

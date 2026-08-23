@@ -5,8 +5,13 @@ edition = "2021"
 description = "Ygg event schema and Arrow/Parquet definitions"
 
 [dependencies]
-arrow = { workspace = true }
-parquet = { workspace = true }
+# NB: the workspace `arrow` dependency pins features `parquet`/`compute`/`flight`
+# which do not exist in arrow 51.0.0, so we declare arrow directly here with the
+# minimal feature set needed for `arrow::datatypes`.
+arrow = { version = "51.0" }
+# NB: the workspace `parquet` dependency pins feature `snappy` which does not
+# exist in parquet 51.0.0 (it is `snap`), so declare directly.
+parquet = { version = "51.0" }
 flatbuffers = "23.5.26"
 serde = { version = "1.0", features = ["derive"] }
 thiserror = { workspace = true }

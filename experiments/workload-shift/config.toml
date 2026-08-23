@@ -1,0 +1,25 @@
+[experiment]
+name = "workload-shift-v0.3"
+version = "0.3.0"
+objective = "contrastive"
+description = "Train a contrastive encoder on Norn + Weir traces and evaluate whether contention and failure structure transfers to the Orda system. Success means transferable structure is detected on the held-out system."
+
+[model]
+d_model = 256
+n_layers = 6
+n_heads = 8
+window_size = 512
+n_windows = 4
+
+[training]
+epochs = 50
+batch_size = 32
+lr = 0.0003
+
+[data]
+source = "norn"
+trace_glob = "campaigns/norn/*/ygg.trace.parquet"
+
+[validation]
+metric = "knn_accuracy"
+expected = "detected"

@@ -57,18 +57,35 @@ where executions with similar underlying behavior cluster together.
 ## Quick Start
 
 ```bash
-# Build collector
-cd collector && cargo build --release
+# Build the Rust collector (Linux recommended for full eBPF/perf support)
+# macOS builds but the eBPF/perf data path is a compile-time no-op.
+cargo build --release
 
-# Record a trace
-./target/release/ygg-collector --output trace.parquet -- ./weir-server
+# Record a trace (requires Linux + root for eBPF/perf)
+sudo ./target/release/ygg-collector --output trace.parquet -- ./weir-server
 
-# Inspect (Python)
-python -m ygg.inspect trace.parquet
+# Confirm the model training entry point loads
+python -m model.train --help
 
-# Compare executions
-python -m ygg.diff baseline.parquet experiment.parquet
+# Confirm the analysis package imports
+python -c "import analysis"
 ```
+
+> **Platform note:** The collector's eBPF (aya) and `perf_event_open` hardware counters are Linux-only, gated behind `cfg(target_os = "linux")`. On macOS the crate compiles but performs no collection. eBPF also requires clang and kernel BTF (`vmlinux.h`); see `DEVELOPMENT.md`.
+
+## Current Status
+
+What is implemented and verified versus what is still scaffolded:
+
+| Component | State | Notes |
+|-----------|-------|-------|
+| `collector/` | Implemented | Rust + eBPF (aya) + `perf_event_open`. `cargo build --release` works. Linux-only telemetry; macOS build is a no-op. `schema.rs` is pending deletion in favor of the `ygg-schema` crate. |
+| `instrumentation/` | Implemented | C++20 header (`ygg.h`) + C implementation + Rust FFI wrapper. Thread-local SPSC ring buffers, `/dev/shm/ygg-<pid>` shared memory, 100ms TSC calibration, single collector thread with Unix socket forwarding + spill-file fallback. Builds `libygg_instrumentation.a`/`.so`. 2/2 tests pass. |
+| `schema/` | Implemented | `ygg-schema` Rust crate with `Event`, `EventKind`, and Arrow/Parquet schemas. |
+| `model/` | Implemented | JAX/Flax: `config.py`, `encoder.py`, `hierarchical.py`, `objectives.py`, `dataset.py`, `train.py`. `python -m model.train --help` works. |
+| `analysis/` | Implemented | `divergence.py`, `clustering.py`, `attribution.py`, `viz.py`. `python -c "import analysis"` works. |
+| `integrations/` | Scaffolded | Kiln/Loki/Norn/Weir integration points exist but are not yet wired to the finished components above. |
+| `experiments/` | Scaffolded | Contention / storage-stall / workload-shift campaign directories. |
 
 ## Components
 
@@ -76,7 +93,7 @@ python -m ygg.diff baseline.parquet experiment.parquet
 |-----------|----------|---------|
 | `collector/` | Rust + eBPF | Kernel/system trace collection |
 | `instrumentation/` | C++20 | Application event emission (zero-overhead) |
-| `schema/` | FlatBuffers + Arrow | Event schema & Parquet serialization |
+| `schema/` | Rust (`ygg-schema`) | Event schema & Arrow/Parquet serialization |
 | `model/` | JAX + Flax | Representation learning |
 | `analysis/` | Python | Clustering, divergence, attribution |
 | `integrations/` | Various | Kiln, Loki, Norn, Weir, Orda |

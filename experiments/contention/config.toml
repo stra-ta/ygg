@@ -1,0 +1,25 @@
+[experiment]
+name = "contention-v0.1"
+version = "0.1.0"
+objective = "masked"
+description = "Train a tiny masked encoder over Norn contention traces and verify that the resulting embeddings separate distinct contention regimes without any labels."
+
+[model]
+d_model = 256
+n_layers = 6
+n_heads = 8
+window_size = 512
+n_windows = 4
+
+[training]
+epochs = 50
+batch_size = 32
+lr = 0.0003
+
+[data]
+source = "norn"
+trace_glob = "campaigns/norn/*/ygg.trace.parquet"
+
+[validation]
+metric = "silhouette"
+expected = "separate"

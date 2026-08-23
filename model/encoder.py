@@ -2,74 +2,84 @@
 Ygg Transformer Encoder
 
 JAX/Flax implementation of the execution embedding model.
+
+This module owns the token embedding, the (reusable) transformer block, the
+prediction heads, and the top-level ``YggModel`` that wires the hierarchical
+encoder (see :mod:`model.hierarchical`) to all four objective heads.
 """
 
 import jax
 import jax.numpy as jnp
 from flax import linen as nn
-from typing import Optional, Tuple
-from dataclasses import dataclass
+from typing import Optional, Dict, Tuple
+
+from model.config import ModelConfig
 
 
-@dataclass
-class EncoderConfig:
-    vocab_size: int = 10000
-    d_model: int = 256
-    n_layers: int = 6
-    n_heads: int = 8
-    d_ff: int = 1024
-    max_seq_len: int = 512
-    dropout: float = 0.1
-    token_dim: int = 5  # Input token dimension (see dataset.py)
+# Backwards-compatibility alias used by analysis tooling / DEVELOPMENT.md.
+EncoderConfig = ModelConfig
+
+
+def _pool(x: jnp.ndarray, mask: jnp.ndarray, method: str) -> jnp.ndarray:
+    """Masked pooling over the sequence axis (axis=1).
+
+    x:    [B, L, D]
+    mask: [B, L]  (1 = real, 0 = padding)
+    """
+    if method == "max":
+        return x.max(axis=1)
+    if method == "cls":
+        return x[:, 0, :]
+    # mean (masked)
+    m = mask[:, :, None]
+    return (x * m).sum(axis=1) / m.sum(axis=1).clip(min=1.0)
 
 
 class TokenEmbedding(nn.Module):
-    """Compose token from categorical + continuous features."""
-    config: EncoderConfig
+    """Compose a token from categorical + continuous event features.
+
+    Input token layout (``config.token_dim`` == 7):
+        [0] event_type   - categorical (vocab)
+        [1] thread       - categorical (bucketed 256)
+        [2] cpu          - categorical (64)
+        [3] log_dt       - continuous (log-scaled time delta)
+        [4:7] arg0,arg1,arg2 - continuous metrics
+    """
+
+    config: ModelConfig
 
     @nn.compact
-    def __call__(self, tokens: jnp.ndarray) -> jnp.ndarray:
-        """
-        tokens: [batch, seq_len, token_dim]
-        Returns: [batch, seq_len, d_model]
-        """
-        # Event type embedding
+    def __call__(self, tokens: jnp.ndarray, train: bool = False) -> jnp.ndarray:
+        # [batch, seq_len, 7]
         event_type = tokens[:, :, 0].astype(jnp.int32)
+        thread_id = tokens[:, :, 1].astype(jnp.int32)
+        cpu_id = tokens[:, :, 2].astype(jnp.int32)
+        dt = tokens[:, :, 3:4]                       # [B, S, 1]
+        metrics = tokens[:, :, 4:]                   # [B, S, n_metrics]
+
         event_emb = nn.Embed(
             num_embeddings=self.config.vocab_size,
             features=self.config.d_model,
             name="event_type_emb",
         )(event_type)
-
-        # Thread embedding (bucketed)
-        thread_id = tokens[:, :, 1].astype(jnp.int32)
         thread_emb = nn.Embed(
             num_embeddings=256,
             features=self.config.d_model,
             name="thread_emb",
         )(thread_id)
-
-        # CPU embedding
-        cpu_id = tokens[:, :, 2].astype(jnp.int32)
         cpu_emb = nn.Embed(
             num_embeddings=64,
             features=self.config.d_model,
             name="cpu_emb",
         )(cpu_id)
-
-        # Time delta projection
-        dt = tokens[:, :, 3:4]  # [batch, seq_len, 1]
         dt_proj = nn.Dense(self.config.d_model, name="dt_proj")(dt)
-
-        # Metric projection (arg0, can extend to arg1, arg2)
-        metrics = tokens[:, :, 4:]  # [batch, seq_len, n_metrics]
         metric_proj = nn.Dense(self.config.d_model, name="metric_proj")(metrics)
 
-        # Sum all embeddings
         x = event_emb + thread_emb + cpu_emb + dt_proj + metric_proj
 
-        # Positional encoding
-        pos = jnp.arange(self.config.max_seq_len)[None, :, None]
+        # Learned positional embedding: window-local index so sequences longer
+        # than one window still receive a valid (cyclic) position.
+        pos = jnp.arange(tokens.shape[1]) % self.config.max_seq_len
         pos_emb = nn.Embed(
             num_embeddings=self.config.max_seq_len,
             features=self.config.d_model,
@@ -77,110 +87,144 @@ class TokenEmbedding(nn.Module):
         )(pos.astype(jnp.int32))
         x = x + pos_emb
 
-        return nn.Dropout(self.config.dropout)(x, deterministic=not self.is_mutable_collection('params'))
+        return nn.Dropout(self.config.dropout)(x, deterministic=not train)
 
 
 class TransformerBlock(nn.Module):
-    """Single transformer encoder block."""
-    config: EncoderConfig
+    """Pre-LN transformer encoder block (reused by local + global stacks)."""
+
+    config: ModelConfig
 
     @nn.compact
     def __call__(
         self,
         x: jnp.ndarray,
-        mask: Optional[jnp.ndarray] = None,
-        deterministic: bool = True,
+        attn_mask: Optional[jnp.ndarray] = None,
+        train: bool = True,
     ) -> jnp.ndarray:
-        # Self-attention
         attn_out = nn.MultiHeadDotProductAttention(
             num_heads=self.config.n_heads,
             qkv_features=self.config.d_model,
             out_features=self.config.d_model,
             dropout_rate=self.config.dropout,
-            deterministic=deterministic,
+            deterministic=not train,
             name="attention",
-        )(x, mask=mask)
+        )(x, mask=attn_mask)
 
-        x = x + nn.Dropout(self.config.dropout)(attn_out, deterministic=deterministic)
+        x = x + nn.Dropout(self.config.dropout)(attn_out, deterministic=not train)
         x = nn.LayerNorm(name="ln1")(x)
 
-        # Feed-forward
-        ff_out = nn.Dense(self.config.d_ff, name="ff1")(x)
-        ff_out = nn.gelu(ff_out)
-        ff_out = nn.Dropout(self.config.dropout)(ff_out, deterministic=deterministic)
-        ff_out = nn.Dense(self.config.d_model, name="ff2")(ff_out)
+        ff = nn.Dense(self.config.d_ff, name="ff1")(x)
+        ff = nn.gelu(ff)
+        ff = nn.Dropout(self.config.dropout)(ff, deterministic=not train)
+        ff = nn.Dense(self.config.d_model, name="ff2")(ff)
 
-        x = x + nn.Dropout(self.config.dropout)(ff_out, deterministic=deterministic)
+        x = x + nn.Dropout(self.config.dropout)(ff, deterministic=not train)
         x = nn.LayerNorm(name="ln2")(x)
-
-        return x
-
-
-class ExecutionEncoder(nn.Module):
-    """Transformer encoder for execution traces."""
-    config: EncoderConfig
-
-    @nn.compact
-    def __call__(
-        self,
-        tokens: jnp.ndarray,
-        mask: Optional[jnp.ndarray] = None,
-        train: bool = False,
-    ) -> jnp.ndarray:
-        """
-        tokens: [batch, seq_len, token_dim]
-        mask: [batch, seq_len] - 1 for real, 0 for padding
-        Returns: [batch, seq_len, d_model] - contextualized token embeddings
-        """
-        x = TokenEmbedding(self.config)(tokens)
-
-        # Convert mask to attention mask
-        if mask is not None:
-            # [batch, 1, 1, seq_len] for broadcasting
-            attn_mask = mask[:, None, None, :].astype(jnp.bool_)
-        else:
-            attn_mask = None
-
-        for i in range(self.config.n_layers):
-            x = TransformerBlock(self.config, name=f"layer_{i}")(
-                x, mask=attn_mask, deterministic=not train
-            )
-
         return x
 
 
 class MaskedEventHead(nn.Module):
-    """Prediction head for masked event modeling."""
-    config: EncoderConfig
+    """Predict the masked event_type at each position."""
+
+    config: ModelConfig
 
     @nn.compact
     def __call__(self, x: jnp.ndarray) -> jnp.ndarray:
-        """x: [batch, seq_len, d_model] -> logits [batch, seq_len, vocab_size]"""
         x = nn.Dense(self.config.d_model, name="dense")(x)
         x = nn.gelu(x)
         x = nn.LayerNorm(name="ln")(x)
-        logits = nn.Dense(self.config.vocab_size, name="output")(x)
-        return logits
+        return nn.Dense(self.config.vocab_size, name="output")(x)
 
 
 class NextEventHead(nn.Module):
-    """Prediction head for next-event prediction."""
-    config: EncoderConfig
+    """Predict the next event_type distribution at each position."""
+
+    config: ModelConfig
 
     @nn.compact
     def __call__(self, x: jnp.ndarray) -> jnp.ndarray:
-        """x: [batch, seq_len, d_model] -> logits [batch, seq_len, vocab_size]"""
         x = nn.Dense(self.config.d_model, name="dense")(x)
         x = nn.gelu(x)
         x = nn.LayerNorm(name="ln")(x)
-        logits = nn.Dense(self.config.vocab_size, name="output")(x)
-        return logits
+        return nn.Dense(self.config.vocab_size, name="output")(x)
+
+
+class ProjectionHead(nn.Module):
+    """Non-linear projection used for the contrastive objective."""
+
+    config: ModelConfig
+
+    @nn.compact
+    def __call__(self, x: jnp.ndarray, train: bool = True) -> jnp.ndarray:
+        x = nn.Dense(self.config.d_model, name="proj1")(x)
+        x = nn.gelu(x)
+        x = nn.Dropout(self.config.dropout)(x, deterministic=not train)
+        return nn.Dense(self.config.d_model, name="proj2")(x)
+
+
+class YggModel(nn.Module):
+    """Full multi-objective model.
+
+    One forward produces everything the four objectives need:
+
+        event      [B, S, d]   contextual per-event embeddings
+        window     [B, N, d]   per-window embeddings (local pool)
+        window_ctx [B, N, d]   window embeddings after global context
+        exec       [B, d]      execution-level embedding
+        masked_logits [B, S, V]
+        next_logits   [B, S, V]
+        proj          [B, d]   projected exec embedding (contrastive)
+    """
+
+    config: ModelConfig
+
+    @nn.compact
+    def __call__(
+        self,
+        tokens: jnp.ndarray,
+        mask: Optional[jnp.ndarray] = None,
+        causal: bool = False,
+        train: bool = False,
+    ) -> Dict[str, jnp.ndarray]:
+        from model.hierarchical import HierarchicalEncoder
+
+        enc = HierarchicalEncoder(self.config, name="hier")
+        out = enc(tokens, mask=mask, causal=causal, train=train)
+
+        event = out["event"]
+        window = out["window"]
+        window_ctx = out["window_ctx"]
+        exec_emb = out["exec"]
+
+        masked_logits = MaskedEventHead(self.config, name="masked_head")(event)
+        next_logits = NextEventHead(self.config, name="next_head")(event)
+        proj = ProjectionHead(self.config, name="proj_head")(exec_emb, train=train)
+
+        return {
+            "event": event,
+            "window": window,
+            "window_ctx": window_ctx,
+            "exec": exec_emb,
+            "masked_logits": masked_logits,
+            "next_logits": next_logits,
+            "proj": proj,
+        }
+
+
+def create_model(config: ModelConfig) -> YggModel:
+    return YggModel(config)
+
+
+def create_embedder(config: ModelConfig, pool: str = "mean") -> "ExecutionEmbedder":
+    return ExecutionEmbedder(config, pool=pool)
 
 
 class ExecutionEmbedder(nn.Module):
-    """Full model: encoder + pooling for execution-level embedding."""
-    config: EncoderConfig
-    pool: str = "mean"  # "mean", "cls", "max"
+    """Inference-only embedder: returns the execution embedding."""
+
+    config: ModelConfig
+    pool: str = "mean"
 
     @nn.compact
     def __call__(
@@ -189,82 +233,8 @@ class ExecutionEmbedder(nn.Module):
         mask: Optional[jnp.ndarray] = None,
         train: bool = False,
     ) -> jnp.ndarray:
-        """
-        Returns: [batch, d_model] - execution embedding
-        """
-        x = ExecutionEncoder(self.config)(tokens, mask, train=train)
+        from model.hierarchical import HierarchicalEncoder
 
-        if self.pool == "mean":
-            if mask is not None:
-                mask = mask[:, :, None]
-                x = (x * mask).sum(axis=1) / mask.sum(axis=1).clip(min=1)
-            else:
-                x = x.mean(axis=1)
-        elif self.pool == "max":
-            x = x.max(axis=1)
-        elif self.pool == "cls":
-            x = x[:, 0, :]  # First token
-
-        return x
-
-
-class ContrastiveModel(nn.Module):
-    """Siamese model for contrastive learning."""
-    config: EncoderConfig
-    temperature: float = 0.07
-
-    @nn.compact
-    def __call__(
-        self,
-        anchor: jnp.ndarray,
-        positive: jnp.ndarray,
-        negative: jnp.ndarray,
-        mask: Optional[jnp.ndarray] = None,
-        train: bool = False,
-    ) -> Tuple[jnp.ndarray, jnp.ndarray]:
-        """
-        Returns: (loss, accuracy)
-        """
-        embedder = ExecutionEmbedder(self.config, name="embedder")
-
-        z_a = embedder(anchor, mask, train=train)
-        z_p = embedder(positive, mask, train=train)
-        z_n = embedder(negative, mask, train=train)
-
-        # Normalize
-        z_a = z_a / jnp.linalg.norm(z_a, axis=-1, keepdims=True)
-        z_p = z_p / jnp.linalg.norm(z_p, axis=-1, keepdims=True)
-        z_n = z_n / jnp.linalg.norm(z_n, axis=-1, keepdims=True)
-
-        # Similarities
-        sim_ap = jnp.sum(z_a * z_p, axis=-1) / self.temperature
-        sim_an = jnp.sum(z_a * z_n, axis=-1) / self.temperature
-
-        # Contrastive loss (InfoNCE-style)
-        logits = jnp.stack([sim_ap, sim_an], axis=-1)  # [batch, 2]
-        labels = jnp.zeros(logits.shape[0], dtype=jnp.int32)  # Positive is index 0
-
-        loss = jnp.mean(
-            nn.softmax_cross_entropy_with_integer_labels(logits, labels)
-        )
-
-        # Accuracy
-        preds = jnp.argmax(logits, axis=-1)
-        acc = jnp.mean(preds == labels)
-
-        return loss, acc
-
-
-def create_model(config: EncoderConfig) -> ExecutionEncoder:
-    """Factory function."""
-    return ExecutionEncoder(config)
-
-
-def create_embedder(config: EncoderConfig, pool: str = "mean") -> ExecutionEmbedder:
-    """Factory for execution embedder."""
-    return ExecutionEmbedder(config, pool=pool)
-
-
-def create_contrastive_model(config: EncoderConfig) -> ContrastiveModel:
-    """Factory for contrastive model."""
-    return ContrastiveModel(config)
+        enc = HierarchicalEncoder(self.config, name="hier")
+        out = enc(tokens, mask=mask, causal=False, train=train)
+        return out["exec"]

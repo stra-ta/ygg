@@ -3,11 +3,12 @@ resolver = "2"
 members = [
     "collector",
     "instrumentation",
+    "schema",
 ]
 
 [workspace.dependencies]
-aya = { version = "0.12", features = ["async-tokio"] }
-arrow = { version = "51.0", features = ["parquet", "compute", "flight"] }
+aya = { version = "0.12", features = ["async_tokio"] }
+arrow = { version = "51.0", features = ["parquet"] }
 parquet = { version = "51.0", features = ["snappy", "zstd"] }
 tokio = { version = "1.38", features = ["rt-multi-thread", "macros", "sync"] }
 anyhow = "1.0"

@@ -30,17 +30,51 @@ bpftool btf dump file /sys/kernel/btf/vmlinux format c > vmlinux.h
 
 ## Building
 
+The Rust workspace (`collector`, `instrumentation`) builds together with Cargo. The `instrumentation` crate compiles its C/C++ sources via `build.rs` (the `cc` crate) and emits `libygg_instrumentation.a`/`.so` — there is no CMake step.
+
 ```bash
-# Build Rust collector
+# Build everything in the Rust workspace (collector + instrumentation)
 cargo build --release
 
-# Build C++ instrumentation
-cd instrumentation && mkdir build && cd build
-cmake .. && make
+# Run on Linux with root for eBPF/perf
+sudo ./target/release/ygg-collector --output trace.parquet -- ./weir-server
+```
 
-# Install Python deps
+> **Platform note:** eBPF (aya) and `perf_event_open` are Linux-only, gated by `cfg(target_os = "linux")`. The collector compiles on macOS but the telemetry data path is a no-op there.
+
+```bash
+# Install Python deps for model/ + analysis/
 pip install -e .
 ```
+
+The `schema/` directory is a standalone Rust crate (`ygg-schema`). Cargo resolves it as part of the workspace build graph (via path dependency); `cargo build --release` from the workspace root builds it alongside the collector and instrumentation.
+
+## Testing
+
+```bash
+# Instrumentation unit tests (2/2 pass)
+cargo test -p ygg-instrumentation
+
+# Confirm the model training entry point loads
+python -m model.train --help
+
+# Confirm the analysis package imports
+python -c "import analysis"
+```
+
+There is no `ygg` CLI yet (the `ygg record/inspect/diff/...` commands in ARCHITECTURE.md are aspirational). Use the commands above to exercise the implemented surface.
+
+## Status
+
+Per-component implementation status:
+
+- **collector/** — *Implemented.* Rust + eBPF (aya) + `perf_event_open`. Key files: `src/main.rs` (CLI/orchestration), `src/ebpf.rs` (eBPF loading + ring buffer polling), `src/perf.rs` (hardware counters), `src/writer.rs` (Arrow/Parquet ZSTD writer), `src/schema.rs` (being replaced by `ygg-schema`). Linux-only; macOS no-op.
+- **instrumentation/** — *Implemented.* C++20 header `include/ygg/ygg.h` + `src/ygg.c`, `src/ring_buffer.c`, `src/collector_thread.c`, `src/ygg_internal.h`, Rust FFI `src/lib.rs`, `build.rs` (cc). Thread-local SPSC ring buffers, `/dev/shm/ygg-<pid>`, 100ms TSC calibration, single collector pthread with Unix socket + spill-file fallback. 2/2 tests pass.
+- **schema/** — *Implemented.* `ygg-schema` crate with `Event`, `EventKind`, Arrow/Parquet schemas.
+- **model/** — *Implemented.* JAX/Flax: `config.py`, `encoder.py`, `hierarchical.py`, `objectives.py` (4 self-supervised losses), `dataset.py` (streaming Parquet + Kiln campaign discovery), `train.py` (multi-objective, validation, checkpointing, pmap). `python -m model.train --help` works.
+- **analysis/** — *Implemented.* `divergence.py` (DTW, PELT/BOCPD, sustained divergence), `clustering.py` (HDBSCAN, UMAP/PCA, FAISS), `attribution.py` (integrated gradients), `viz.py` (static SVGs).
+- **integrations/** — *Scaffolded.* Kiln/Loki/Norn/Weir points exist but not yet wired to finished components.
+- **experiments/** — *Scaffolded.* Campaign directories only.
 
 ## Running the Collector
 

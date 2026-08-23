@@ -1,0 +1,25 @@
+[experiment]
+name = "storage-stall-v0.2"
+version = "0.2.0"
+objective = "contrastive"
+description = "Contrastive encoder over Loki fault campaigns (Weir). Verify that embeddings separate fault regimes and order by injected fault magnitude, and that phase transitions are detected."
+
+[model]
+d_model = 256
+n_layers = 6
+n_heads = 8
+window_size = 512
+n_windows = 4
+
+[training]
+epochs = 50
+batch_size = 32
+lr = 0.0003
+
+[data]
+source = "loki"
+trace_glob = "campaigns/loki/*/ygg.trace.parquet"
+
+[validation]
+metric = "knn_accuracy"
+expected = "ordered"
