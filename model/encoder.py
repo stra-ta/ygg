@@ -102,6 +102,8 @@ class TransformerBlock(nn.Module):
         attn_mask: Optional[jnp.ndarray] = None,
         train: bool = True,
     ) -> jnp.ndarray:
+        # Pre-LN: normalize BEFORE the sublayer
+        x_norm = nn.LayerNorm(name="ln1")(x)
         attn_out = nn.MultiHeadDotProductAttention(
             num_heads=self.config.n_heads,
             qkv_features=self.config.d_model,
@@ -109,18 +111,18 @@ class TransformerBlock(nn.Module):
             dropout_rate=self.config.dropout,
             deterministic=not train,
             name="attention",
-        )(x, mask=attn_mask)
+        )(x_norm, mask=attn_mask)
 
         x = x + nn.Dropout(self.config.dropout)(attn_out, deterministic=not train)
-        x = nn.LayerNorm(name="ln1")(x)
 
-        ff = nn.Dense(self.config.d_ff, name="ff1")(x)
+        # Pre-LN: normalize BEFORE the sublayer
+        x_norm2 = nn.LayerNorm(name="ln2")(x)
+        ff = nn.Dense(self.config.d_ff, name="ff1")(x_norm2)
         ff = nn.gelu(ff)
         ff = nn.Dropout(self.config.dropout)(ff, deterministic=not train)
         ff = nn.Dense(self.config.d_model, name="ff2")(ff)
 
         x = x + nn.Dropout(self.config.dropout)(ff, deterministic=not train)
-        x = nn.LayerNorm(name="ln2")(x)
         return x
 
 

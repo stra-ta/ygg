@@ -1,0 +1,30 @@
+{
+  "silhouette_by_regime": 0.3011475205421448,
+  "reduction_method": "umap",
+  "separated": true,
+  "n_traces": 16,
+  "regimes": [
+    "tight",
+    "yield",
+    "bounded",
+    "exponential"
+  ],
+  "thread_counts": [
+    1,
+    4,
+    16,
+    64,
+    1,
+    4,
+    16,
+    64,
+    1,
+    4,
+    16,
+    64,
+    1,
+    4,
+    16,
+    64
+  ]
+}

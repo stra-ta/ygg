@@ -1,5 +1,6 @@
 # Rust
 /target/
+instrumentation/bench/target/
 **/*.rs.bk
 Cargo.lock
 
@@ -37,6 +38,7 @@ collector/target/bpfel-unknown-none/
 # Checkpoints
 checkpoints/
 *.ckpt
+*.msgpack
 
 # Data
 *.parquet

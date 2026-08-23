@@ -1,0 +1,96 @@
+[
+  {
+    "collector_active": false,
+    "dropped_events": 0,
+    "events": 1000000,
+    "median_cycles_per_event": 4.333,
+    "p95_cycles_per_event": 5.291,
+    "p99_cycles_per_event": 5.375,
+    "platform": "macos-arm64",
+    "samples": 1000,
+    "scenario": "baseline_disabled",
+    "threads": 1,
+    "unit": "ns"
+  },
+  {
+    "collector_active": false,
+    "dropped_events": 936464,
+    "events": 1000000,
+    "median_cycles_per_event": 9.375,
+    "p95_cycles_per_event": 69.291,
+    "p99_cycles_per_event": 82.9193,
+    "platform": "macos-arm64",
+    "samples": 1000,
+    "scenario": "ygg_event_no_collector",
+    "threads": 1,
+    "unit": "ns"
+  },
+  {
+    "collector_active": true,
+    "dropped_events": 0,
+    "events": 60000,
+    "median_cycles_per_event": 80.7915,
+    "p95_cycles_per_event": 121.5889,
+    "p99_cycles_per_event": 250.199,
+    "platform": "macos-arm64",
+    "samples": 60,
+    "scenario": "ygg_event_draining",
+    "threads": 1,
+    "unit": "ns"
+  },
+  {
+    "collector_active": true,
+    "dropped_events": 936464,
+    "events": 1000000,
+    "median_cycles_per_event": 9.375,
+    "p95_cycles_per_event": 61.9181,
+    "p99_cycles_per_event": 101.083,
+    "platform": "macos-arm64",
+    "samples": 1000,
+    "scenario": "ring_at_capacity",
+    "threads": 1,
+    "unit": "ns"
+  },
+  {
+    "collector_active": true,
+    "dropped_events": 0,
+    "events": 240000,
+    "median_cycles_per_event": 70.5,
+    "p95_cycles_per_event": 216.2996,
+    "p99_cycles_per_event": 589.9997,
+    "per_thread_cycles_per_event": [
+      71.437,
+      69.854,
+      70.2495,
+      70.458
+    ],
+    "platform": "macos-arm64",
+    "samples": 240,
+    "scenario": "ygg_event_threads",
+    "threads": 4,
+    "unit": "ns"
+  },
+  {
+    "collector_active": true,
+    "dropped_events": 0,
+    "events": 480000,
+    "median_cycles_per_event": 69.041,
+    "p95_cycles_per_event": 157.9264,
+    "p99_cycles_per_event": 236.7837,
+    "per_thread_cycles_per_event": [
+      69.3955,
+      62.833,
+      70.083,
+      65.729,
+      64.187,
+      63.3125,
+      70.9375,
+      69.958
+    ],
+    "platform": "macos-arm64",
+    "samples": 480,
+    "scenario": "ygg_event_threads",
+    "threads": 8,
+    "unit": "ns"
+  }
+]

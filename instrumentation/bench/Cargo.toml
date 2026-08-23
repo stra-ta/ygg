@@ -1,0 +1,17 @@
+[package]
+name = "ygg-instrumentation-bench"
+version = "0.1.0"
+edition = "2021"
+
+# Detach from the parent `ygg` workspace so this crate can be built and run
+# standalone from instrumentation/bench (the parent lists only collector /
+# instrumentation / schema as members). This crate only benchmarks the already
+# built instrumentation library; it does not change it.
+[workspace]
+
+[[bin]]
+name = "ygg-instrumentation-bench"
+path = "run.rs"
+
+[dependencies]
+serde_json = "1.0"

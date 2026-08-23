@@ -72,13 +72,16 @@ def contrastive_loss(
     sim_ap_all = (a @ p.T) / temperature                         # [B, B]
     sim_an_all = (a @ n.T) / temperature                         # [B, B]
 
-    denom = jnp.exp(sim_ap_all).sum(-1) + jnp.exp(sim_an_all).sum(-1)
-    num = jnp.exp(sim_ap)
-    loss = -jnp.log(num / denom.clip(min=1e-8) + 1e-8)
+    # Numerically stable InfoNCE via logsumexp over the full distractor set.
+    # All logits per row i: [sim(a_i, p_j) for j] ++ [sim(a_i, n_j) for j] -> [B, 2B].
+    logits = jnp.concatenate([sim_ap_all, sim_an_all], axis=1)   # [B, 2B]
+    labels = jnp.arange(B)                                       # own positive at index i
+    # Stable cross-entropy: -logits[label] + logsumexp(logits)
+    loss = -logits[jnp.arange(B), labels] + jax.nn.logsumexp(logits, axis=-1)
     loss = loss.mean()
 
     # For row i the correct match is positive j == i (first block).
-    combined = jnp.concatenate([sim_ap_all, sim_an_all], axis=1)  # [B, 2B]
+    combined = logits
     pred = jnp.argmax(combined, axis=1)
     acc = (pred == jnp.arange(B)).mean()
     return loss, acc
@@ -95,8 +98,8 @@ def temporal_consistency_loss(
     a = w[:, :-1, :]
     b = w[:, 1:, :]
     sim = (a * b).sum(-1)  # [B, N-1]
-    # High similarity is good -> minimise its negative.
-    return -sim.mean()
+    # High similarity (identical adjacent windows) -> loss 0; orthogonal -> loss 1.
+    return (1.0 - sim).mean()
 
 
 def combine_losses(
