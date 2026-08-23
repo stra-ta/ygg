@@ -85,7 +85,7 @@ What is implemented and verified versus what is still scaffolded:
 | `model/` | Implemented | JAX/Flax: `config.py`, `encoder.py`, `hierarchical.py`, `objectives.py`, `dataset.py`, `train.py`. `python -m model.train --help` works. |
 | `analysis/` | Implemented | `divergence.py`, `clustering.py`, `attribution.py`, `viz.py`. `python -c "import analysis"` works. |
 | `integrations/` | Scaffolded | Kiln/Loki/Norn/Weir integration points exist but are not yet wired to the finished components above. |
-| `experiments/` | Scaffolded | Contention / storage-stall / workload-shift campaign directories. |
+| `experiments/` | V0.1 synthetic evidence | Contention V0.1 synthetic pipeline implemented (generate → masked-only train → UMAP → silhouette 0.30, no policy labels). Real Norn campaign pending. V0.2/V0.3 still scaffolded. |
 
 ## Components
 

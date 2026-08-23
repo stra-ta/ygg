@@ -471,6 +471,6 @@ This section reflects what is actually built today (see `README.md` for working 
 | Model | Implemented | JAX/Flax: `config.py`, `encoder.py`, `hierarchical.py`, `objectives.py` (4 losses), `dataset.py` (streaming Parquet, Kiln discovery), `train.py` (multi-objective, validation, checkpointing, pmap). `python -m model.train --help` works. |
 | Analysis | Implemented | `divergence.py` (DTW, PELT/BOCPD, sustained divergence), `clustering.py` (HDBSCAN, UMAP/PCA, FAISS), `attribution.py` (integrated gradients), `viz.py` (static SVGs). `python -c "import analysis"` works. |
 | Integrations | Scaffolded | Kiln/Loki/Norn/Weir points exist but not yet wired to finished components. |
-| Experiments | Scaffolded | Contention / storage-stall / workload-shift campaign directories. |
+| Experiments | V0.1 synthetic evidence | Contention V0.1 synthetic pipeline implemented (generation → masked-only training → UMAP → silhouette 0.30, no policy labels). Real Norn campaign pending. V0.2/V0.3 scaffolded. |
 
 > The `ygg record/inspect/diff/neighbors/cluster/embed/explain` CLI commands and the example outputs above describe the target interface, not yet-implemented behavior.

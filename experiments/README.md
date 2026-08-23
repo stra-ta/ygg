@@ -9,7 +9,7 @@ run).
 
 | Experiment | Version | Source | Objective | Validation | Status |
 | --- | --- | --- | --- | --- | --- |
-| [contention](contention/) | 0.1.0 | norn | masked | silhouette / separate | scaffolded |
+| [contention](contention/) | 0.1.0 | norn | masked | silhouette / separate | synthetic-evidence |
 | [storage-stall](storage-stall/) | 0.2.0 | loki | contrastive | knn_accuracy / ordered | scaffolded |
 | [workload-shift](workload-shift/) | 0.3.0 | norn | contrastive | knn_accuracy / detected | scaffolded |
 

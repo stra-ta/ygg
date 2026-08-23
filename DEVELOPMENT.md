@@ -74,7 +74,7 @@ Per-component implementation status:
 - **model/** — *Implemented.* JAX/Flax: `config.py`, `encoder.py`, `hierarchical.py`, `objectives.py` (4 self-supervised losses), `dataset.py` (streaming Parquet + Kiln campaign discovery), `train.py` (multi-objective, validation, checkpointing, pmap). `python -m model.train --help` works.
 - **analysis/** — *Implemented.* `divergence.py` (DTW, PELT/BOCPD, sustained divergence), `clustering.py` (HDBSCAN, UMAP/PCA, FAISS), `attribution.py` (integrated gradients), `viz.py` (static SVGs).
 - **integrations/** — *Scaffolded.* Kiln/Loki/Norn/Weir points exist but not yet wired to finished components.
-- **experiments/** — *Scaffolded.* Campaign directories only.
+- **experiments/** — *V0.1 synthetic evidence.* Contention synthetic pipeline (generation → masked-only training → UMAP → silhouette 0.30) implemented; real Norn campaign pending. V0.2/V0.3 scaffolded.
 
 ## Running the Collector
 
