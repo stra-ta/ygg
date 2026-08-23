@@ -1,0 +1,57 @@
+[
+  {
+    "n_eval_windows": 3000,
+    "per_regime_silhouette": {
+      "bounded": 0.027794407680630684,
+      "exponential": -0.008080597966909409,
+      "tight": -0.017689211294054985,
+      "yield": 0.08396478742361069
+    },
+    "silhouette": -0.0676216334104538,
+    "variant": "event"
+  },
+  {
+    "n_eval_windows": 3000,
+    "per_regime_silhouette": {
+      "bounded": 0.031441375613212585,
+      "exponential": 0.0018836990930140018,
+      "tight": -0.012244109995663166,
+      "yield": 0.07104324549436569
+    },
+    "silhouette": -0.08128701895475388,
+    "variant": "event+timing"
+  },
+  {
+    "n_eval_windows": 3000,
+    "per_regime_silhouette": {
+      "bounded": 0.025423118844628334,
+      "exponential": 0.00787507276982069,
+      "tight": -0.012138781137764454,
+      "yield": 0.07347511500120163
+    },
+    "silhouette": -0.0857575461268425,
+    "variant": "event+args"
+  },
+  {
+    "n_eval_windows": 3000,
+    "per_regime_silhouette": {
+      "bounded": 0.027341002598404884,
+      "exponential": 0.007572105620056391,
+      "tight": -0.011380000971257687,
+      "yield": 0.07292450219392776
+    },
+    "silhouette": -0.08802366256713867,
+    "variant": "event+timing+args"
+  },
+  {
+    "n_eval_windows": 3000,
+    "per_regime_silhouette": {
+      "bounded": 0.023435253649950027,
+      "exponential": -0.007547655608505011,
+      "tight": -0.013985859230160713,
+      "yield": 0.08412229269742966
+    },
+    "silhouette": -0.06012173369526863,
+    "variant": "event+contrastive"
+  }
+]

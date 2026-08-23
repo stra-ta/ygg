@@ -55,3 +55,7 @@ tracing/
 instrumentation/build/
 # Raw capture spill files (large binaries; Parquet derivatives are kept)
 *.events
+
+# Run-indexed capture derivatives (66 MB per full 10-run study; regenerate
+# with N_RUNS=10 bash run_capture.sh)
+experiments/contention/real/*_run*.parquet

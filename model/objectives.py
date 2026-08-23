@@ -49,6 +49,33 @@ def next_event_loss(
     return masked_event_loss(logits, labels, ignore_index=ignore_index)
 
 
+def masked_mse(
+    pred: jnp.ndarray,
+    target: jnp.ndarray,
+    ignore_index: float = -1.0,
+) -> jnp.ndarray:
+    """Mean squared error over masked / valid positions only.
+
+    Used for the continuous V0.2 regression targets (masked/next dt and args).
+    ``target`` carries ``ignore_index`` where the position should not contribute.
+
+    pred:   [B, S] or [B, S, C]
+    target: same shape, with ``ignore_index`` marking ignored positions.
+    """
+    if pred.ndim == 3:
+        pred_f = pred.reshape(-1, pred.shape[-1])
+        target_f = target.reshape(-1, target.shape[-1])
+        valid = (target_f != ignore_index).any(axis=-1)
+    else:
+        pred_f = pred.reshape(-1)
+        target_f = target.reshape(-1)
+        valid = target_f != ignore_index
+    if valid.sum() == 0:
+        return jnp.array(0.0, dtype=pred.dtype)
+    se = (pred_f[valid] - target_f[valid]) ** 2
+    return se.mean()
+
+
 def contrastive_loss(
     z_anchor: jnp.ndarray,
     z_positive: jnp.ndarray,
