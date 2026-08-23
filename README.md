@@ -79,7 +79,7 @@ What is implemented and verified versus what is still scaffolded:
 
 | Component | State | Notes |
 |-----------|-------|-------|
-| `collector/` | Implemented | Rust + eBPF (aya) + `perf_event_open`. `cargo build --release` works. Linux-only telemetry; macOS build is a no-op. `schema.rs` is pending deletion in favor of the `ygg-schema` crate. |
+| `collector/` | Implemented | Rust + eBPF (aya) + `perf_event_open`. `cargo build --release` works. Linux-only telemetry; macOS build is a no-op. Depends on the `ygg-schema` crate for the `Event` type (the old `schema.rs` was deleted). |
 | `instrumentation/` | Implemented | C++20 header (`ygg.h`) + C implementation + Rust FFI wrapper. Thread-local SPSC ring buffers, `/dev/shm/ygg-<pid>` shared memory, 100ms TSC calibration, single collector thread with Unix socket forwarding + spill-file fallback. Builds `libygg_instrumentation.a`/`.so`. 2/2 tests pass. |
 | `schema/` | Implemented | `ygg-schema` Rust crate with `Event`, `EventKind`, and Arrow/Parquet schemas. |
 | `model/` | Implemented | JAX/Flax: `config.py`, `encoder.py`, `hierarchical.py`, `objectives.py`, `dataset.py`, `train.py`. `python -m model.train --help` works. |
@@ -155,6 +155,29 @@ Application (YGG_EVENT)          Kernel (eBPF)
 - No "AI observability" SaaS nonsense
 
 Ygg is a **research instrument**. Think: `perf` met representation learning and developed opinions about causality.
+
+## Documentation
+
+- [ARCHITECTURE.md](docs/ARCHITECTURE.md) — system design, data model, collector/instrumentation architecture, milestones.
+- [DEVELOPMENT.md](DEVELOPMENT.md) — build, test, and run instructions.
+
+## Development
+
+```bash
+# Build the Rust workspace release artifacts (Linux recommended for eBPF/perf)
+cargo build --release
+
+# Run the instrumentation crate's tests
+cargo test -p ygg-instrumentation --release
+
+# Confirm the model training entry point loads
+python -m model.train --help
+
+# Confirm the analysis package imports
+python -c "import analysis"
+```
+
+See [DEVELOPMENT.md](DEVELOPMENT.md) for full build, test, and run instructions.
 
 ## License
 

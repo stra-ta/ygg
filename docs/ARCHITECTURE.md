@@ -401,33 +401,40 @@ Test: cross-heavy vs modify-heavy vs cancel-heavy vs sweep
 ```
 ygg/
 ├── collector/
-│   ├── ebpf/           # eBPF probes (probes.bpf.c)
-│   ├── perf/           # perf_event_open wrapper
-│   └── src/            # Rust collector (main.rs)
+│   ├── ebpf/probes.bpf.c
+│   └── src/{main,ebpf,perf,writer}.rs
 ├── instrumentation/
-│   ├── include/ygg/    # ygg.h (C++ API)
-│   └── src/            # C implementation (ygg.c)
+│   ├── include/ygg/ygg.h
+│   ├── src/{ygg,ring_buffer,collector_thread,ygg_internal}.c
+│   ├── src/lib.rs
+│   └── build.rs
 ├── schema/
-│   ├── event.fbs       # FlatBuffers schema
-│   └── EVENT_SCHEMA.md
+│   ├── event.fbs
+│   ├── EVENT_SCHEMA.md
+│   └── src/lib.rs          # ygg-schema crate
 ├── model/
-│   ├── encoder/        # Transformer encoder
-│   ├── objectives/     # Self-supervised objectives
-│   ├── dataset/        # Parquet dataset loader
-│   └── train.py        # Training entry point
+│   ├── config.py
+│   ├── encoder.py
+│   ├── hierarchical.py
+│   ├── objectives.py
+│   ├── dataset.py
+│   └── train.py
 ├── analysis/
-│   ├── clustering/     # UMAP, HDBSCAN, etc.
-│   ├── divergence/     # Diff, attribution
-│   └── attribution/    # Feature importance
+│   ├── __init__.py
+│   ├── divergence.py
+│   ├── clustering.py
+│   ├── attribution.py
+│   └── viz.py
 ├── integrations/
-│   ├── kiln/
-│   ├── loki/
-│   ├── norn/
-│   └── weir/
+│   ├── kiln.rs
+│   ├── loki.rs
+│   ├── norn.rs
+│   └── weir.rs
 ├── experiments/
-│   ├── contention/
-│   ├── storage-stall/
-│   └── workload-shift/
+│   ├── README.md
+│   ├── contention/{README.md,config.toml}
+│   ├── storage-stall/{README.md,config.toml}
+│   └── workload-shift/{README.md,config.toml}
 └── docs/
     ├── ARCHITECTURE.md
     ├── TRACE-MODEL.md
@@ -458,7 +465,7 @@ This section reflects what is actually built today (see `README.md` for working 
 
 | Component | State | Key facts |
 |-----------|-------|-----------|
-| Collector | Implemented | Rust + eBPF (aya) + `perf_event_open`; files `main.rs`, `ebpf.rs`, `perf.rs`, `writer.rs`, `schema.rs`. Linux-only (macOS no-op). `cargo build --release` works. `schema.rs` is being replaced by `ygg-schema`. |
+| Collector | Implemented | Rust + eBPF (aya) + `perf_event_open`; files `main.rs`, `ebpf.rs`, `perf.rs`, `writer.rs`. Linux-only (macOS no-op). `cargo build --release` works. The collector uses the `ygg-schema` crate for event definitions. |
 | Instrumentation | Implemented | C++20 `ygg.h` + C sources + Rust FFI (`lib.rs`) built via `build.rs` (cc). Thread-local SPSC ring buffers, `/dev/shm/ygg-<pid>`, 100ms TSC calibration, single collector pthread with Unix socket + spill-file fallback. 2/2 tests pass. |
 | Schema | Implemented | `ygg-schema` Rust crate: `Event`, `EventKind`, Arrow/Parquet schemas. Resolved as part of the cargo workspace build graph. |
 | Model | Implemented | JAX/Flax: `config.py`, `encoder.py`, `hierarchical.py`, `objectives.py` (4 losses), `dataset.py` (streaming Parquet, Kiln discovery), `train.py` (multi-objective, validation, checkpointing, pmap). `python -m model.train --help` works. |
