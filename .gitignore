@@ -34,11 +34,11 @@ collector/target/bpfel-unknown-none/
 *.so
 *.dylib
 *.dll
+experiments/contention/real/norn_capture
 
 # Checkpoints
 checkpoints/
 *.ckpt
-*.msgpack
 *.msgpack
 
 # Data
