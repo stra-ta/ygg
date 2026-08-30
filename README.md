@@ -7,6 +7,19 @@ Turn versioned execution traces into diagnostics about where behavior changed an
 Ygg combines application events, Linux kernel telemetry, a versioned Arrow schema, representation learning, and change-point analysis.
 Dropped-event counts stay in the data instead of disappearing from the result.
 
+## Measured evidence
+
+| Study | Result |
+| --- | --- |
+| Single-thread event emission with collector draining | 80 ns p50, 108 ns p99, 0 dropped |
+| Eight-thread event emission | 82 ns p50, 2.0 µs p99, 0 dropped |
+| Synthetic contention regimes | +0.30 silhouette |
+| Blind policy-switch localization | 0.06% error |
+| Real Norn objective ablation | -0.06 to -0.09 silhouette across all five variants |
+
+The overhead run is macOS arm64 and the representation studies use their committed trace sets.
+The negative Norn result is part of the evidence, not a line to hide below the fold.
+
 <table>
   <tr>
     <td><img src="figures/embedding_map.svg" alt="Execution embedding map"></td>
