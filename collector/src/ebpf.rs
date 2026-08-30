@@ -117,13 +117,15 @@ impl TscCalibration {
 #[cfg(target_os = "linux")]
 mod imp {
     use super::TscCalibration;
-    use ygg_schema::Event;
     use crate::Args;
     use anyhow::{Context, Result};
     use crossbeam::channel::Sender;
     use std::path::PathBuf;
+    use std::sync::Arc;
+    use std::sync::atomic::{AtomicBool, Ordering};
     use std::time::Duration;
-    use tracing::warn;
+    use tracing::{info, warn};
+    use ygg_schema::Event;
 
     /// Locate the compiled BPF object. Honors `YGG_BPF_OBJECT`, then falls back
     /// to a few conventional locations.

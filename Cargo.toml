@@ -6,6 +6,9 @@ members = [
     "schema",
 ]
 
+[workspace.package]
+license = "MIT"
+
 [workspace.dependencies]
 aya = { version = "0.12", features = ["async_tokio"] }
 arrow = { version = "51.0", features = ["parquet"] }

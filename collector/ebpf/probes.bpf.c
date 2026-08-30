@@ -4,8 +4,7 @@
 #include <bpf/bpf_tracing.h>
 #include <bpf/bpf_core_read.h>
 
-#define MAX_CPUS 256
-#define EVENT_RING_SIZE (1 << 20)  // 1M events per CPU
+#define EVENT_RING_SIZE (1 << 20)
 
 struct event {
     __u64 timestamp_ns;
@@ -23,6 +22,13 @@ struct {
     __uint(type, BPF_MAP_TYPE_RINGBUF);
     __uint(max_entries, EVENT_RING_SIZE * sizeof(struct event));
 } events SEC(".maps");
+
+struct {
+    __uint(type, BPF_MAP_TYPE_PERCPU_ARRAY);
+    __uint(max_entries, 1);
+    __type(key, __u32);
+    __type(value, __u64);
+} dropped_events SEC(".maps");
 
 struct {
     __uint(type, BPF_MAP_TYPE_ARRAY);
@@ -45,7 +51,12 @@ static __always_inline __u64 get_timestamp_ns(void) {
 
 static __always_inline void emit_event(__u16 kind, __u64 arg0, __u64 arg1, __u64 arg2) {
     struct event *e = bpf_ringbuf_reserve(&events, sizeof(*e), 0);
-    if (!e) return;
+    if (!e) {
+        __u32 key = 0;
+        __u64 *dropped = bpf_map_lookup_elem(&dropped_events, &key);
+        if (dropped) (*dropped)++;
+        return;
+    }
 
     e->timestamp_ns = get_timestamp_ns();
     e->cpu = bpf_get_smp_processor_id();
