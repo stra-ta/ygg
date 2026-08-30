@@ -461,7 +461,7 @@ ygg/
 
 ## Current Implementation Status
 
-This section reflects what is actually built today (see `README.md` for working commands). It augments, not replaces, the vision above.
+This section reflects what is actually built today (see `GUIDE.md` for working commands). It augments, not replaces, the vision above.
 
 | Component | State | Key facts |
 |-----------|-------|-----------|
