@@ -92,7 +92,7 @@ struct ExecutionMetadata {
 
 ### Storage Format
 
-**Apache Arrow / Parquet** — columnar, compressed, zero-copy interoperability.
+**Apache Arrow / Parquet** — columnar, compressed, Arrow columnar interoperability via Arrow/Parquet (zero-copy is an Arrow property, not a Ygg guarantee).
 
 File layout:
 - Row group 1: metadata (single row)
@@ -171,7 +171,7 @@ YGG_EVENT(DurableCommit, lsn);
 - Single collector thread drains via shared memory
 - `rdtsc`/`rdtscp` timestamps calibrated to `CLOCK_MONOTONIC_RAW`
 - Cache-line aligned storage
-- Lock-free SPSC ring buffer per thread
+- SPSC ring buffer per thread (single-producer/single-consumer, no formal lock-free progress claim; see `docs/LIMITATIONS.md`)
 
 ## Model
 

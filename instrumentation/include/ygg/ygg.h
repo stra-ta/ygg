@@ -4,7 +4,7 @@
  * Ygg Instrumentation Library - public C/C++ API
  *
  * Ultra-low-overhead application event emission for trace collection.
- * Hot path: no allocation, no locks (lock-free thread-local SPSC ring).
+ * Hot path: no allocation, no locks (thread-local SPSC ring (SPSC, no formal lock-free claim)).
  * Measured accept cost: ~70-80 ns on macOS/arm64 (mach_absolute_time);
  * the "~5-10 cycles" figure is an estimate for x86-64 rdtsc. See
  * instrumentation/bench/ for the benchmark harness and results.
