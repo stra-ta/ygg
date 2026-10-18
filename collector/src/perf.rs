@@ -11,7 +11,6 @@
 #[cfg(target_os = "linux")]
 mod imp {
     use crate::ebpf::TscCalibration;
-    use ygg_schema::Event;
     use crate::Args;
     use anyhow::{anyhow, Result};
     use crossbeam::channel::Sender;
@@ -20,6 +19,7 @@ mod imp {
     use std::sync::Arc;
     use std::time::Duration;
     use tracing::warn;
+    use ygg_schema::Event;
 
     const PERF_TYPE_HARDWARE: u32 = 0;
     const PERF_COUNT_HW_CPU_CYCLES: u64 = 0;
@@ -97,8 +97,11 @@ mod imp {
         attr.size = std::mem::size_of::<libc::perf_event_attr>() as u32;
         attr.config = config;
         attr.sample_period = period;
-        attr.sample_type =
-            PERF_SAMPLE_IP | PERF_SAMPLE_TMESTAMP | PERF_SAMPLE_READ | PERF_SAMPLE_TID | PERF_SAMPLE_CPU;
+        attr.sample_type = PERF_SAMPLE_IP
+            | PERF_SAMPLE_TMESTAMP
+            | PERF_SAMPLE_READ
+            | PERF_SAMPLE_TID
+            | PERF_SAMPLE_CPU;
         // disabled = 1 (the first bit of the flags word) until we ioctl ENABLE.
         attr.bits = 1;
         attr.wakeup_events = 1;
@@ -302,7 +305,6 @@ mod imp {
 #[cfg(not(target_os = "linux"))]
 mod imp {
     use crate::ebpf::TscCalibration;
-    use ygg_schema::Event;
     use crate::Args;
     use anyhow::Result;
     use crossbeam::channel::Sender;
@@ -310,6 +312,7 @@ mod imp {
     use std::sync::Arc;
     use std::time::Duration;
     use tracing::warn;
+    use ygg_schema::Event;
 
     pub fn run(
         _sender: Sender<Event>,

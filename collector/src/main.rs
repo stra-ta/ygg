@@ -28,7 +28,6 @@ mod writer;
 use anyhow::Result;
 use clap::Parser;
 use crossbeam::channel::bounded;
-use ygg_schema::Event;
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
@@ -36,9 +35,14 @@ use std::time::Duration;
 use tokio::signal;
 use tracing::{info, warn};
 use writer::{ParquetWriter, EVENT_BATCH_SIZE};
+use ygg_schema::Event;
 
 #[derive(Parser, Debug)]
-#[command(name = "ygg-collector", version, about = "Ygg eBPF/perf trace collector")]
+#[command(
+    name = "ygg-collector",
+    version,
+    about = "Ygg eBPF/perf trace collector"
+)]
 struct Args {
     /// Output Parquet file
     #[arg(short, long, default_value = "trace.parquet")]
@@ -117,9 +121,8 @@ async fn main() -> Result<()> {
     let e_shutdown = shutdown.clone();
     let e_tx = tx.clone();
     let e_calib = calib;
-    let ebpf_handle = tokio::task::spawn_blocking(move || {
-        ebpf::run(e_tx, &e_args, &e_shutdown, &e_calib)
-    });
+    let ebpf_handle =
+        tokio::task::spawn_blocking(move || ebpf::run(e_tx, &e_args, &e_shutdown, &e_calib));
 
     // perf collector thread (sync), only if requested.
     let mut perf_handle = None;

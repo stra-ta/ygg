@@ -56,7 +56,17 @@ impl Event {
         let arg0 = u64::from_ne_bytes(record[24..32].try_into().ok()?);
         let arg1 = u64::from_ne_bytes(record[32..40].try_into().ok()?);
         let arg2 = u64::from_ne_bytes(record[40..48].try_into().ok()?);
-        Some(Self { timestamp_ns, cpu, pid, tid, kind, padding: 0, arg0, arg1, arg2 })
+        Some(Self {
+            timestamp_ns,
+            cpu,
+            pid,
+            tid,
+            kind,
+            padding: 0,
+            arg0,
+            arg1,
+            arg2,
+        })
     }
 }
 

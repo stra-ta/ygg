@@ -230,11 +230,7 @@ pub fn read_spill_file(path: &std::path::Path) -> std::io::Result<(StreamHeader,
     let mut file = std::fs::File::open(path)?;
     let mut header = None;
     let mut events = Vec::new();
-    read_stream(
-        &mut file,
-        |h| header = Some(h),
-        |e| events.push(e),
-    )?;
+    read_stream(&mut file, |h| header = Some(h), |e| events.push(e))?;
     Ok((header.expect("spill file has a header"), events))
 }
 
@@ -277,15 +273,19 @@ mod tests {
         let (header, events) = read_spill_file(&spill).expect("read spill");
         assert!(is_valid_magic(&header), "bad stream magic");
         assert_eq!(
-            events.len() as u64, n,
-            "expected {} events, got {}", n, events.len()
+            events.len() as u64,
+            n,
+            "expected {} events, got {}",
+            n,
+            events.len()
         );
         assert_eq!(events[0].kind, 1000);
         assert_eq!(events[0].arg0, 0);
         let last = &events[events.len() - 1];
         assert_eq!(last.arg0, n - 1);
         assert_eq!(
-            dropped() - drops_before, 0,
+            dropped() - drops_before,
+            0,
             "low-volume run should not drop"
         );
         println!(

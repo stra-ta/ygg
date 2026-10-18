@@ -5,7 +5,6 @@
 //! file with ZSTD compression. The data path is fully synchronous; the caller
 //! is expected to run `run` inside `tokio::task::spawn_blocking`.
 
-use ygg_schema::Event;
 use anyhow::Result;
 use arrow::array::{UInt16Array, UInt32Array, UInt64Array};
 use arrow::datatypes::{DataType, Field, Schema, SchemaRef};
@@ -20,6 +19,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 use tracing::info;
+use ygg_schema::Event;
 
 /// Number of events per Arrow `RecordBatch` / Parquet row group.
 pub const EVENT_BATCH_SIZE: usize = 8192;

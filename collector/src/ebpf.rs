@@ -121,8 +121,8 @@ mod imp {
     use anyhow::{Context, Result};
     use crossbeam::channel::Sender;
     use std::path::PathBuf;
-    use std::sync::Arc;
     use std::sync::atomic::{AtomicBool, Ordering};
+    use std::sync::Arc;
     use std::time::Duration;
     use tracing::{info, warn};
     use ygg_schema::Event;
@@ -151,11 +151,7 @@ mod imp {
         None
     }
 
-    fn attach_btf(
-        bpf: &mut aya::Bpf,
-        name: &str,
-        tp: &str,
-    ) -> Result<aya::programs::Link> {
+    fn attach_btf(bpf: &mut aya::Bpf, name: &str, tp: &str) -> Result<aya::programs::Link> {
         use aya::programs::BtfTracePoint;
         let prog: &mut BtfTracePoint = bpf
             .program_mut(name)
@@ -165,11 +161,7 @@ mod imp {
         Ok(prog.attach(tp)?)
     }
 
-    fn attach_kprobe(
-        bpf: &mut aya::Bpf,
-        name: &str,
-        ret: bool,
-    ) -> Result<aya::programs::Link> {
+    fn attach_kprobe(bpf: &mut aya::Bpf, name: &str, ret: bool) -> Result<aya::programs::Link> {
         if ret {
             use aya::programs::KRetProbe;
             let prog: &mut KRetProbe = bpf
@@ -218,7 +210,11 @@ mod imp {
             _links.push(attach_btf(&mut bpf, "sys_exit", "syscalls/sys_exit")?);
         }
         if args.block_io {
-            _links.push(attach_btf(&mut bpf, "block_rq_issue", "block/block_rq_issue")?);
+            _links.push(attach_btf(
+                &mut bpf,
+                "block_rq_issue",
+                "block/block_rq_issue",
+            )?);
             _links.push(attach_btf(
                 &mut bpf,
                 "block_rq_complete",
@@ -243,7 +239,9 @@ mod imp {
         }
 
         // Per-CPU ring buffer (BPF_MAP_TYPE_RINGBUF); aya reads all CPUs.
-        let mut events = bpf.map_mut("events").context("`events` ring buffer map missing")?;
+        let mut events = bpf
+            .map_mut("events")
+            .context("`events` ring buffer map missing")?;
         let mut ring = aya::maps::RingBuf::try_from(&*events)?;
 
         info!("eBPF collection started");
@@ -272,7 +270,6 @@ mod imp {
 #[cfg(not(target_os = "linux"))]
 mod imp {
     use super::TscCalibration;
-    use ygg_schema::Event;
     use crate::Args;
     use anyhow::Result;
     use crossbeam::channel::Sender;
@@ -280,6 +277,7 @@ mod imp {
     use std::sync::Arc;
     use std::time::Duration;
     use tracing::warn;
+    use ygg_schema::Event;
 
     pub fn run(
         _sender: Sender<Event>,
@@ -287,9 +285,7 @@ mod imp {
         shutdown: &Arc<AtomicBool>,
         _calib: &TscCalibration,
     ) -> Result<()> {
-        warn!(
-            "eBPF collection is only supported on Linux; this build runs without kernel tracing"
-        );
+        warn!("eBPF collection is only supported on Linux; this build runs without kernel tracing");
         while !shutdown.load(Ordering::Relaxed) {
             std::thread::sleep(Duration::from_millis(200));
         }
