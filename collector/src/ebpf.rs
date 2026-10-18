@@ -25,16 +25,6 @@ pub struct TscCalibration {
 }
 
 impl TscCalibration {
-    /// A degenerate calibration (identity mapping) used on platforms without a
-    /// usable TSC / `CLOCK_MONOTONIC_RAW`.
-    pub fn unavailable() -> Self {
-        Self {
-            tsc_freq_hz: 1.0,
-            monotonic_offset_ns: 0,
-            available: false,
-        }
-    }
-
     /// Convert a raw TSC value to `CLOCK_MONOTONIC_RAW` nanoseconds.
     #[allow(dead_code)]
     pub fn tsc_to_monotonic_ns(&self, tsc: u64) -> u64 {
@@ -49,7 +39,6 @@ impl TscCalibration {
 #[cfg(all(target_os = "linux", target_arch = "x86_64"))]
 mod tsc_impl {
     use super::TscCalibration;
-    use std::time::Duration;
 
     #[inline]
     unsafe fn rdtsc() -> u64 {
@@ -62,7 +51,7 @@ mod tsc_impl {
             tv_nsec: 0,
         };
         unsafe { libc::clock_gettime(libc::CLOCK_MONOTONIC_RAW, &mut ts) };
-        ts.tv_sec as i64 * 1_000_000_000 + ts.tv_nsec as i64
+        ts.tv_sec * 1_000_000_000 + ts.tv_nsec
     }
 
     /// Measure TSC frequency by sampling TSC against `CLOCK_MONOTONIC_RAW` over a
@@ -110,7 +99,11 @@ impl TscCalibration {
 impl TscCalibration {
     /// Calibration is unavailable on this target; returns a no-op mapping.
     pub fn calibrate() -> Self {
-        Self::unavailable()
+        Self {
+            tsc_freq_hz: 1.0,
+            monotonic_offset_ns: 0,
+            available: false,
+        }
     }
 }
 
