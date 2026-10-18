@@ -9,6 +9,11 @@
  * run in a separate process after a fork) can map it by name.
  */
 
+// glibc exposes syscall() and sched_getcpu() only with _GNU_SOURCE.
+#ifndef _GNU_SOURCE
+#define _GNU_SOURCE
+#endif
+
 #include "ygg_internal.h"
 
 #include <stdlib.h>

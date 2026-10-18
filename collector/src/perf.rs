@@ -17,9 +17,77 @@ mod imp {
     use std::ptr;
     use std::sync::atomic::{AtomicBool, Ordering};
     use std::sync::Arc;
-    use std::time::Duration;
-    use tracing::warn;
+    use tracing::{info, warn};
     use ygg_schema::Event;
+
+    // libc does not export the perf_event uapi surface, so declare the
+    // subset this collector touches. Layout must match the kernel's
+    // <uapi/linux/perf_event.h>.
+    #[repr(C)]
+    #[derive(Clone, Copy)]
+    struct PerfEventAttr {
+        type_: u32,
+        size: u32,
+        config: u64,
+        sample_period: u64,
+        sample_type: u64,
+        read_format: u64,
+        bits: u64,
+        wakeup_events: u32,
+        bp_type: u32,
+        bp_addr_or_config1: u64,
+        bp_len_or_config2: u64,
+        branch_sample_type: u64,
+        sample_regs_user: u64,
+        sample_stack_user: u32,
+        clockid: i32,
+        sample_regs_intr: u64,
+        aux_watermark: u32,
+        sample_max_stack: u16,
+        reserved2: u16,
+        aux_sample_size: u32,
+        reserved3: u32,
+    }
+
+    #[repr(C)]
+    struct PerfEventMmapPage {
+        version: u32,
+        compat_version: u32,
+        lock: u32,
+        index: u32,
+        offset: i64,
+        time_enabled: u64,
+        time_running: u64,
+        capabilities: u64,
+        pmc_width: u16,
+        time_shift: u16,
+        time_mult: u32,
+        time_zero: u64,
+        time_offset: u64,
+        time_cycles: u64,
+        time_mask: u64,
+        cap_user_time_zero: u16,
+        cap_user_time_short: u16,
+        reserved: [u32; 5],
+        data_head: u64,
+        data_tail: u64,
+        data_offset: u64,
+        data_size: u64,
+    }
+
+    // glibc exports the perf_event_open wrapper on only a few targets, so go
+    // through the raw syscall instead; libc always provides the number.
+    fn perf_event_open(
+        attr: *mut PerfEventAttr,
+        pid: libc::pid_t,
+        cpu: libc::c_int,
+        group_fd: libc::c_int,
+        flags: libc::c_ulong,
+    ) -> libc::c_int {
+        unsafe {
+            libc::syscall(libc::SYS_perf_event_open, attr, pid, cpu, group_fd, flags) as libc::c_int
+        }
+    }
 
     const PERF_TYPE_HARDWARE: u32 = 0;
     const PERF_COUNT_HW_CPU_CYCLES: u64 = 0;
@@ -37,7 +105,6 @@ mod imp {
     const PERF_RECORD_SAMPLE: u32 = 9;
 
     const PERF_EVENT_IOC_ENABLE: libc::c_ulong = 0x2400;
-    const PERF_EVENT_IOC_DISABLE: libc::c_ulong = 0x2401;
 
     fn counter_config(name: &str) -> Result<u64> {
         Ok(match name {
@@ -62,7 +129,6 @@ mod imp {
     }
 
     struct Counter {
-        name: String,
         kind: u16,
         fd: i32,
         base: u64,
@@ -92,9 +158,9 @@ mod imp {
         let n_pages = 1usize << order;
         let mmap_len = page_size * (1 + n_pages);
 
-        let mut attr: libc::perf_event_attr = unsafe { std::mem::zeroed() };
+        let mut attr: PerfEventAttr = unsafe { std::mem::zeroed() };
         attr.type_ = PERF_TYPE_HARDWARE;
-        attr.size = std::mem::size_of::<libc::perf_event_attr>() as u32;
+        attr.size = std::mem::size_of::<PerfEventAttr>() as u32;
         attr.config = config;
         attr.sample_period = period;
         attr.sample_type = PERF_SAMPLE_IP
@@ -106,7 +172,7 @@ mod imp {
         attr.bits = 1;
         attr.wakeup_events = 1;
 
-        let fd = unsafe { libc::perf_event_open(&mut attr, pid, -1, -1, 0) };
+        let fd = perf_event_open(&mut attr, pid, -1, -1, 0);
         if fd < 0 {
             return Err(anyhow!(
                 "perf_event_open({name}) failed: {}",
@@ -135,7 +201,6 @@ mod imp {
         unsafe { libc::ioctl(fd, PERF_EVENT_IOC_ENABLE, 0 as libc::c_ulong) };
 
         Ok(Counter {
-            name: name.to_string(),
             kind: 0,
             fd,
             base: 0,
@@ -148,8 +213,8 @@ mod imp {
     /// wrapping around `size`. Returns a heap buffer (records are small).
     unsafe fn read_bytes(base: *const u8, size: usize, pos: usize, n: usize) -> Vec<u8> {
         let mut out = vec![0u8; n];
-        for i in 0..n {
-            out[i] = *base.add((pos + i) % size);
+        for (i, byte) in out.iter_mut().enumerate() {
+            *byte = *base.add((pos + i) % size);
         }
         out
     }
@@ -166,7 +231,7 @@ mod imp {
 
     /// Drain one counter's ring buffer, emitting an [`Event`] per sample.
     unsafe fn drain(c: &mut Counter, sender: &Sender<Event>) -> Result<()> {
-        let page = c.mmap as *mut libc::perf_event_mmap_page;
+        let page = c.mmap as *mut PerfEventMmapPage;
         let data_head = (*page).data_head as usize;
         let data_tail = (*page).data_tail as usize;
         let page_size = libc::sysconf(libc::_SC_PAGESIZE) as usize;
@@ -285,8 +350,8 @@ mod imp {
                 warn!("epoll_wait failed: {}", std::io::Error::last_os_error());
                 break;
             }
-            for k in 0..(n as usize) {
-                let idx = (events[k].u64 as usize).wrapping_sub(1);
+            for ev in events.iter().take(n as usize) {
+                let idx = (ev.u64 as usize).wrapping_sub(1);
                 if idx < counters.len() {
                     if let Err(e) = unsafe { drain(&mut counters[idx], &sender) } {
                         warn!("perf drain error: {e}");

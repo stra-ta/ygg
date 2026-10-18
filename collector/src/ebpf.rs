@@ -124,7 +124,7 @@ mod imp {
     use std::sync::atomic::{AtomicBool, Ordering};
     use std::sync::Arc;
     use std::time::Duration;
-    use tracing::{info, warn};
+    use tracing::info;
     use ygg_schema::Event;
 
     /// Locate the compiled BPF object. Honors `YGG_BPF_OBJECT`, then falls back
@@ -151,34 +151,33 @@ mod imp {
         None
     }
 
-    fn attach_btf(bpf: &mut aya::Bpf, name: &str, tp: &str) -> Result<aya::programs::Link> {
+    fn attach_btf(
+        bpf: &mut aya::Bpf,
+        name: &str,
+        tp: &str,
+        btf: &aya::Btf,
+    ) -> Result<aya::programs::tp_btf::BtfTracePointLink> {
         use aya::programs::BtfTracePoint;
         let prog: &mut BtfTracePoint = bpf
             .program_mut(name)
             .with_context(|| format!("eBPF program `{name}` not found in object"))?
             .try_into()?;
-        prog.load()?;
-        Ok(prog.attach(tp)?)
+        prog.load(tp, btf)?;
+        let link_id = prog.attach()?;
+        Ok(prog.take_link(link_id)?)
     }
 
-    fn attach_kprobe(bpf: &mut aya::Bpf, name: &str, ret: bool) -> Result<aya::programs::Link> {
-        if ret {
-            use aya::programs::KRetProbe;
-            let prog: &mut KRetProbe = bpf
-                .program_mut(name)
-                .with_context(|| format!("eBPF program `{name}` not found in object"))?
-                .try_into()?;
-            prog.load()?;
-            Ok(prog.attach(name, 0)?)
-        } else {
-            use aya::programs::KProbe;
-            let prog: &mut KProbe = bpf
-                .program_mut(name)
-                .with_context(|| format!("eBPF program `{name}` not found in object"))?
-                .try_into()?;
-            prog.load()?;
-            Ok(prog.attach(name, 0)?)
-        }
+    fn attach_kprobe(bpf: &mut aya::Bpf, name: &str) -> Result<aya::programs::kprobe::KProbeLink> {
+        use aya::programs::KProbe;
+        let prog: &mut KProbe = bpf
+            .program_mut(name)
+            .with_context(|| format!("eBPF program `{name}` not found in object"))?
+            .try_into()?;
+        prog.load()?;
+        // kretprobe-ness lives in the object's program section kind, so the
+        // attach call is the same for both probe flavors.
+        let link_id = prog.attach(name, 0)?;
+        Ok(prog.take_link(link_id)?)
     }
 
     pub fn run(
@@ -191,68 +190,89 @@ mod imp {
             "probes.bpf.o not found; build the BPF object (see build.rs) and set YGG_BPF_OBJECT",
         )?;
         let mut bpf = aya::Bpf::load_file(&obj)?;
+        let btf = aya::Btf::from_sys_fs()
+            .context("kernel BTF not available at /sys/kernel/btf/vmlinux")?;
 
         // Keep every link alive for the lifetime of the collector; dropping a
-        // link detaches the program.
-        let mut _links: Vec<aya::programs::Link> = Vec::new();
+        // link detaches the program. The trait `aya::programs::Link` is not a
+        // type, so the two wrapper kinds get their own vecs.
+        let mut _btf_links: Vec<aya::programs::tp_btf::BtfTracePointLink> = Vec::new();
+        let mut _probe_links: Vec<aya::programs::kprobe::KProbeLink> = Vec::new();
 
         if args.sched {
-            _links.push(attach_btf(&mut bpf, "sched_switch", "sched/sched_switch")?);
-            _links.push(attach_btf(&mut bpf, "sched_wakeup", "sched/sched_wakeup")?);
-            _links.push(attach_btf(
+            _btf_links.push(attach_btf(
+                &mut bpf,
+                "sched_switch",
+                "sched/sched_switch",
+                &btf,
+            )?);
+            _btf_links.push(attach_btf(
+                &mut bpf,
+                "sched_wakeup",
+                "sched/sched_wakeup",
+                &btf,
+            )?);
+            _btf_links.push(attach_btf(
                 &mut bpf,
                 "sched_migrate_task",
                 "sched/sched_migrate_task",
+                &btf,
             )?);
         }
         if args.syscalls {
-            _links.push(attach_btf(&mut bpf, "sys_enter", "syscalls/sys_enter")?);
-            _links.push(attach_btf(&mut bpf, "sys_exit", "syscalls/sys_exit")?);
+            _btf_links.push(attach_btf(
+                &mut bpf,
+                "sys_enter",
+                "syscalls/sys_enter",
+                &btf,
+            )?);
+            _btf_links.push(attach_btf(&mut bpf, "sys_exit", "syscalls/sys_exit", &btf)?);
         }
         if args.block_io {
-            _links.push(attach_btf(
+            _btf_links.push(attach_btf(
                 &mut bpf,
                 "block_rq_issue",
                 "block/block_rq_issue",
+                &btf,
             )?);
-            _links.push(attach_btf(
+            _btf_links.push(attach_btf(
                 &mut bpf,
                 "block_rq_complete",
                 "block/block_rq_complete",
+                &btf,
             )?);
         }
         if args.network {
-            _links.push(attach_kprobe(&mut bpf, "tcp_sendmsg", false)?);
-            _links.push(attach_kprobe(&mut bpf, "tcp_recvmsg", true)?);
+            _probe_links.push(attach_kprobe(&mut bpf, "tcp_sendmsg")?);
+            _probe_links.push(attach_kprobe(&mut bpf, "tcp_recvmsg")?);
         }
         if args.page_faults {
-            _links.push(attach_btf(
+            _btf_links.push(attach_btf(
                 &mut bpf,
                 "page_fault_user",
                 "exceptions/page_fault_user",
+                &btf,
             )?);
-            _links.push(attach_btf(
+            _btf_links.push(attach_btf(
                 &mut bpf,
                 "page_fault_kernel",
                 "exceptions/page_fault_kernel",
+                &btf,
             )?);
         }
 
         // Per-CPU ring buffer (BPF_MAP_TYPE_RINGBUF); aya reads all CPUs.
-        let mut events = bpf
+        let events = bpf
             .map_mut("events")
             .context("`events` ring buffer map missing")?;
         let mut ring = aya::maps::RingBuf::try_from(&*events)?;
 
         info!("eBPF collection started");
-        let poll = Duration::from_millis(100);
+        // aya 0.12 exposes no blocking poll on the sync RingBuf; wake on an
+        // interval and drain whatever the per-CPU buffers hold.
         while !shutdown.load(Ordering::Relaxed) {
-            if let Err(e) = ring.poll(poll) {
-                warn!("ring buffer poll error: {e}");
-                break;
-            }
             while let Some(item) = ring.next() {
-                if let Some(ev) = Event::from_kernel_record(item) {
+                if let Some(ev) = Event::from_kernel_record(&item) {
                     if args.pid != 0 && ev.pid != args.pid {
                         continue;
                     }
@@ -262,6 +282,7 @@ mod imp {
                     }
                 }
             }
+            std::thread::sleep(Duration::from_millis(100));
         }
         Ok(())
     }
