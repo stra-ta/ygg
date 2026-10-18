@@ -2,7 +2,7 @@
 /target/
 instrumentation/bench/target/
 **/*.rs.bk
-Cargo.lock
+# Cargo.lock
 
 # Python
 __pycache__/
