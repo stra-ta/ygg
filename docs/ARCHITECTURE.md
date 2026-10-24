@@ -4,7 +4,8 @@
 
 ## Overview
 
-Ygg is a trace intelligence engine that learns embeddings of system behavior from low-level telemetry. It sits at the center of the stra-ta stack, consuming traces from Norn, Weir, Orda, Loki, and Kiln to answer:
+Ygg is a trace intelligence engine that learns embeddings of system behavior from low-level telemetry.
+It consumes traces from Norn, Weir, Orda, Loki, and Kiln to answer:
 
 - Is this execution normal?
 - Where did behavior diverge?
